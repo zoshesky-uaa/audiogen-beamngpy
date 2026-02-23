@@ -32,12 +32,16 @@ def main():
     # Create a vehicle
     vehicle = Vehicle('ego_vehicle', model='etk800', licence='PYTHON')
     scenario.add_vehicle(vehicle, pos=(-717, 101, 118), rot_quat=(0, 0, 0.3826834, 0.9238795))
-    vehicle.ai.set_mode('traffic')
     
     # Make, load, and start the scenario
     scenario.make(beamng)
     beamng.scenario.load(scenario)
     beamng.scenario.start()
+
+    # Vehicle setup
+    if not vehicle.is_connected():  
+        vehicle.connect(beamng)
+    vehicle.ai.set_mode('traffic')
     
     # Tick system
     while True:
