@@ -9,7 +9,7 @@ import os
 
 def main():
     #Preferences
-    BEAMNG_LOCATION = "E:\BeamNG.tech.v0.38.3.0"
+    BEAMNG_LOCATION = r"E:\BeamNG.tech.v0.38.3.0"
     PORT = 25252
 
     # Create a BeamNGpy instance

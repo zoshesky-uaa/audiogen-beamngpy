@@ -17,4 +17,5 @@ services:
       - ./recordings:/app/recordings 
     shm_size: "1g"  
     user: "${UID:-1000}:${GID:-1000}"  
+    command: ["python","/app/main.py"]
     restart: unless-stopped
