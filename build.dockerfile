@@ -22,5 +22,4 @@ ENV BEAMNG_HOST=host.docker.internal
 ENV BEAMNG_PORT=25252
 ENV MPLCONFIGDIR=/tmp/matplotlib
 
-ENTRYPOINT ["/usr/local/bin/wait-for-beamng.sh"]
 CMD ["python","/app/main.py"]
