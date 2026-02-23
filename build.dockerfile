@@ -3,7 +3,7 @@ EXPOSE 25252/tcp
 EXPOSE 4713/tcp
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends git libsndfile1 pulseaudio-utils libportaudio2 portaudio19-dev netcat-openbsd \
+  && apt-get install -y --no-install-recommends git libsndfile1 pulseaudio-utils libportaudio2 portaudio19-dev netcat-openbsd procps \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
@@ -21,5 +21,7 @@ ENV PULSE_SERVER=tcp:host.docker.internal:4713
 ENV BEAMNG_HOST=host.docker.internal
 ENV BEAMNG_PORT=25252
 ENV MPLCONFIGDIR=/tmp/matplotlib
+ENV PYTHONUNBUFFERED=1
 
-CMD ["python","/app/main.py"]
+# Use unbuffered python so logs stream to Docker logs immediately
+CMD ["python","-u","/app/main.py"]
