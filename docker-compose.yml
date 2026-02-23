@@ -1,0 +1,20 @@
+services:
+  audiogen:
+    build:
+      context: .
+      dockerfile: build.dockerfile
+      args:
+        REPO: https://github.com/zoshesky-uaa/audiogen-beamngpy
+        BRANCH: master
+    environment:
+      - BEAMNG_HOST=host.docker.internal
+      - BEAMNG_PORT=25252
+      - PULSE_SERVER=tcp:host.docker.internal:4713
+    ports:
+      - "25252:25252"
+      - "4713:4713"
+    volumes:
+      - ./recordings:/app/recordings 
+    shm_size: "1g"  
+    user: "${UID:-1000}:${GID:-1000}"  
+    restart: unless-stopped

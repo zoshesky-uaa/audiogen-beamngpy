@@ -1,5 +1,4 @@
 soundfile
 sounddevice
 numpy
-threading
 beamngpy
