@@ -3,7 +3,7 @@ EXPOSE 25252/tcp
 EXPOSE 4713/tcp
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends git libsndfile1 pulseaudio-utils libportaudio2 portaudio19-dev \
+  && apt-get install -y --no-install-recommends git libsndfile1 pulseaudio-utils libportaudio2 portaudio19-dev netcat-openbsd \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
@@ -13,6 +13,12 @@ ARG BRANCH=master
 
 RUN git clone --depth 1 --branch ${BRANCH} ${REPO} /app || true
 
+# Copy our entrypoint into the image and make it executable
+COPY wait-for-beamng.sh /usr/local/bin/wait-for-beamng.sh
+RUN chmod +x /usr/local/bin/wait-for-beamng.sh
+
+# Install Python requirements from the cloned repo (or the build-context file)
+COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
 ENV PULSE_SERVER=tcp:host.docker.internal:4713
@@ -20,4 +26,5 @@ ENV BEAMNG_HOST=host.docker.internal
 ENV BEAMNG_PORT=25252
 ENV MPLCONFIGDIR=/tmp/matplotlib
 
+ENTRYPOINT ["/usr/local/bin/wait-for-beamng.sh"]
 CMD ["python","/app/main.py"]

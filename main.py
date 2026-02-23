@@ -1,10 +1,11 @@
 from beamngpy import BeamNGpy, Scenario, Vehicle
+from beamngpy.logging import BNGDisconnectedError
 import threading
 import sounddevice as sd
 import soundfile as sf
 import numpy as np
 import os
-
+import time
 
 
 def main():
@@ -14,6 +15,14 @@ def main():
 
     # Create a BeamNGpy instance
     beamng = BeamNGpy('localhost', PORT, home=BEAMNG_LOCATION)
+    while True: 
+        try:
+            beamng.open(launch=False)
+            break
+        except BNGDisconnectedError:  
+            print("Retrying connection...")  
+            time.sleep(5)
+    
     beamng.settings.set_nondeterministic() 
     beamng.settings.set_steps_per_second(30)
     beamng.control.pause()  
