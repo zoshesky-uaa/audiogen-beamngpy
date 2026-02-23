@@ -9,12 +9,11 @@ import time
 
 
 def main():
-    #Preferences
-    BEAMNG_LOCATION = r"E:\BeamNG.tech.v0.38.3.0"
-    PORT = 25252
+    # Connect to BeamNGpy
+    BEAMNG_HOST = os.getenv("BEAMNG_HOST", "host.docker.internal")
+    BEAMNG_PORT = int(os.getenv("BEAMNG_PORT", "25252"))
+    beamng = BeamNGpy(host=BEAMNG_HOST, port=BEAMNG_PORT)  
 
-    # Create a BeamNGpy instance
-    beamng = BeamNGpy('localhost', PORT, home=BEAMNG_LOCATION)
     while True: 
         try:
             beamng.open(launch=False)
