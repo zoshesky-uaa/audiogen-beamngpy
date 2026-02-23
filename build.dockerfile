@@ -13,10 +13,6 @@ ARG BRANCH=master
 
 RUN git clone --depth 1 --branch ${BRANCH} ${REPO} /app || true
 
-# Copy our entrypoint into the image and make it executable
-COPY wait-for-beamng.sh /usr/local/bin/wait-for-beamng.sh
-RUN chmod +x /usr/local/bin/wait-for-beamng.sh
-
 # Install Python requirements from the cloned repo (or the build-context file)
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
