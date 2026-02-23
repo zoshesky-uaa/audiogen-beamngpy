@@ -102,3 +102,7 @@ def audio_stream(device, tick):
                 f.write(audio_4ch[:, i])
     tick.set()
     return audio_4ch
+
+
+if __name__ == "__main__":
+    main()
