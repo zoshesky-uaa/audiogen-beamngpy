@@ -1,16 +1,21 @@
-from main import Tick
+from main import Tick, AudioRec
 from run import filesystem, se
 import random
 import threading
 from time import sleep
 
+SIMULATION_DURATION_SECONDS = 120
+TICK_RATE_SECONDS = 0.1
+
 def siren_scenario(simulation, driver):
     fsm = filesystem.FSM()
     ticker = Tick()
+
     ev_vehicle = simulation.random_emergency_vehicle()
     simulation.vehicle_setup(ev_vehicle, (-717, 101, 118), (0, 0, 0.3826834, 0.9238795))
     simulation.vehicle_connect(ev_vehicle)
     driver.switch()
+
     se1 = se.VehicleSoundEvent(class_index=3,
                                track_index=0,
                                beanmgpy=simulation.beamng,
@@ -18,8 +23,11 @@ def siren_scenario(simulation, driver):
                                driver=driver,
                                FSM=fsm,
                                tick=ticker)
-    sleep(5)
-    while ticker.frame_index < 1500:
+    sleep(10)
+
+    audio_data = AudioRec(duration=SIMULATION_DURATION_SECONDS)
+    
+    while ticker.frame_index < (SIMULATION_DURATION_SECONDS * 10):
         if not se1.active_event:
             print(f"Frame {ticker.frame_index}: No active event. Choosing next event...")
             chosen = random.choices([se1.random_empty, se1.random_siren_event],
@@ -27,4 +35,7 @@ def siren_scenario(simulation, driver):
             threading.Thread(target=chosen, daemon=True).start()
 
         ticker.iterate()
-        sleep(0.1)
+        sleep(TICK_RATE_SECONDS)
+    recording = audio_data.stop()
+    fsm.write_wav(recording)
+    fsm.testplot(recording)
