@@ -1,71 +1,41 @@
-from beamngpy import BeamNGpy, Scenario, Vehicle
-from beamngpy.logging import BNGDisconnectedError
+
 import threading
+
+from run import filesystem, intiation, se
+from scenarios import siren
 import sounddevice as sd
 import soundfile as sf
 import numpy as np
-import os
-import time
+from time import sleep
 
 
 def main():
-    # Connect to BeamNGpy
-    BEAMNG_HOST = os.getenv("BEAMNG_HOST", "host.docker.internal")
-    BEAMNG_PORT = int(os.getenv("BEAMNG_PORT", "25252"))
-    beamng = BeamNGpy(host=BEAMNG_HOST, port=BEAMNG_PORT)  
 
-    while True: 
-        try:
-            beamng.open(launch=False)
-            break
-        except BNGDisconnectedError:  
-            print("Retrying connection...")  
-            time.sleep(5)
+    simulation = intiation.Simulation()
+    driver = simulation.random_vehicle()
+    simulation.vehicle_setup(driver, location=(-603, 101, 104), rotation=(0, 0, 0.3826834, 0.9238795))
+    simulation.start_scenario()
+    simulation.vehicle_connect(driver)
+    siren.siren_scenario(simulation, driver)  
+
+    simulation.close()
+
+class Tick:
+    def __init__(self):
+        self.frame_index = 0
+        # event to notify waiting threads when the tick advances
+        self._event = threading.Event()
     
-    beamng.settings.set_nondeterministic() 
-    beamng.settings.set_steps_per_second(30)
-    beamng.control.pause()  
+    def iterate(self):
+        """Advance the tick and wake anyone waiting for the next frame."""
+        self.frame_index += 1
+        self._event.set()
+        self._event.clear()
 
-    # Create a scenario
-    scenario = Scenario('west_coast_usa', 'example')
-
-    # Create a vehicle
-    vehicle = Vehicle('ego_vehicle', model='etk800', licence='PYTHON')
-    scenario.add_vehicle(vehicle, pos=(-717, 101, 118), rot_quat=(0, 0, 0.3826834, 0.9238795))
-    
-    # Make, load, and start the scenario
-    scenario.make(beamng)
-    beamng.scenario.load(scenario)
-    beamng.scenario.start()
-
-    # Vehicle setup
-    if not vehicle.is_connected():  
-        vehicle.connect(beamng)
-    vehicle.ai.set_mode('traffic')
-    
-    # Tick system
-    while True:
-        threads = thread_queue(2,
-                            [simulation_stream, audio_stream],
-                            [beamng, sd.default.device])
-
-        threads[0][1].wait()  # Wait for simulation stream to be ready
-        threads[1][1].wait()  # Wait for audio stream to be ready
-
-        user_input = input('Press Enter for next tick, or type q to quit: ').strip().lower()
-        if user_input in ("q", "quit", "exit"):
-            break
-
-    beamng.close()
-
-def thread_queue(count, funcs, args):
-    threads = []
-    for i in range(count):
-        tick = threading.Event()
-        thread = threading.Thread(target=funcs[i], args=(args[i], tick), daemon=True)
-        threads.append((thread, tick))
-        thread.start()
-    return threads
+    def wait_next(self):
+        """Block until the next tick iteration occurs."""
+        self._event.wait()
+ 
 
 def simulation_stream(beamng, tick):
     tick.clear()
