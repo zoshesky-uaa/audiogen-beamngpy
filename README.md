@@ -1,4 +1,3 @@
 ### Check List
-* `New-NetFirewallRule -DisplayName "BeamNG Port 25252" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 25252`
-* `docker compose up -d audiogen \ docker compose logs -f audiogen`
-* C:\Program Files (x86)\PulseAudio
+* Information regarding delay and other possible issues with KMixxer:
+https://github.com/PortAudio/portaudio/wiki/Win32AudioBackgroundInfo
