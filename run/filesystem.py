@@ -29,11 +29,11 @@ class FSM:
         new_trial_path.mkdir()
         self.trial_path = new_trial_path
 
-    def write_event_csv(self, event):
-        csv_file = self.trial_path / f"{event.class_index}_{event.track_index}_output.csv"
+    def write_event_csv(self, class_index, track_index, position, frame_index):
+        csv_file = self.trial_path / f"{class_index}_{track_index}_output.csv"
         with open(csv_file, "a", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow([event.tick.frame_index, event.class_index, event.track_index, event.position[0], event.position[1], event.position[2]])
+            writer.writerow([frame_index, class_index, track_index, position[0], position[1], position[2]])
 
     def write_wav(self, audio_data):
         wav_file = self.trial_path / f"audio.wav"
