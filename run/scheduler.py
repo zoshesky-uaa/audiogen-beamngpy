@@ -4,12 +4,13 @@ END_FRAME = SIMULATION_DURATION_SECONDS * (1/TICK_RATE_SECONDS)
 
 import threading
 from time import sleep
-from run import filesystem, recorder, sound_event
+from run import ev, filesystem, recorder, driver,traffic
 
 class Tick:
     def __init__(self):
         self.frame_index = 0
         self._event = threading.Event()
+        self.shutdown = threading.Event()
     
     def iterate(self):
         """Advance the tick and wake anyone waiting for the next frame."""
@@ -29,36 +30,64 @@ class Scheduler:
         self.threads = []
         self.class_events = []
 
-    def append_event(self, class_index):
+    def append_event(self, class_index, vehicle=None, ai=True):
         match class_index:
+            case 0:
+                thread = threading.Thread(target=driver.DriverRecorder, 
+                                          args=(self.simulation,
+                                                self.fsm, 
+                                                self.tick,
+                                                ai), 
+                                          daemon=True)
+                self.threads.append(thread)
             case 1:
-                 arg = (class_index,
-                    self.class_events.count(1),
-                    self.simulation,
-                    self.fsm, 
-                    self.tick)
+                thread = threading.Thread(target=traffic.VehicleSoundEvent, 
+                                          args=(class_index,
+                                                self.class_events.count(1),
+                                                self.simulation,
+                                                self.fsm,
+                                                vehicle, 
+                                                self.tick), 
+                                          daemon=True)
+                self.class_events.append(class_index)
+                self.threads.append(thread)
             case 3:
-                arg = (class_index,
-                    self.class_events.count(3),
-                    self.simulation,
-                    self.fsm, 
-                    self.tick)
+                thread = threading.Thread(target=ev.VehicleSoundEvent, 
+                                        args=(class_index,
+                                            self.class_events.count(3),
+                                            self.simulation,
+                                            self.fsm,
+                                            vehicle, 
+                                            self.tick), 
+                                        daemon=True)
+                self.class_events.append(class_index)
+                self.threads.append(thread)
             case _: return   
-        thread = threading.Thread(target=sound_event.VehicleSoundEvent, args=arg, daemon=True)
-        self.threads.append(thread)
-        thread.start()
+        thread.start()  
 
     def simulate(self):
+        self.simulation.beamng.control.resume()  
+        # Warmup frames
+        self.simulation.beamng.ui.display_message("Warming up scenario...")
+        while self.tick.frame_index < 30:
+            self.tick.iterate()
+            sleep(TICK_RATE_SECONDS)
+        self.tick.frame_index = 0
+        self.simulation.beamng.ui.display_message("Starting scenario loop.")
         audio_data = recorder.AudioRec(duration=SIMULATION_DURATION_SECONDS)
         while self.tick.frame_index < END_FRAME:
             self.tick.iterate()
             sleep(TICK_RATE_SECONDS)
         recording = audio_data.stop()
         self.fsm.write_wav(recording)
+        self.simulation.beamng.control.pause()
 
     def stop_all(self):
+        self.tick.shutdown.set()
+        self.tick._event.set()
         for thread in self.threads:
-            thread.join()
+            while thread.is_alive():
+                thread.join(timeout=10.0)
 
 '''
 def thread_queue(count, funcs, args):
