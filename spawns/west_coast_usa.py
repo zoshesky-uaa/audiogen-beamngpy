@@ -25,7 +25,7 @@ SPAWNS = [
 
 class builder:
     def __init__(self):
-        self.spawn_locations = SPAWNS
+        self.spawn_locations = SPAWNS.copy()
         self.name = 'west_coast_usa'
 
     def random_location(self):
@@ -33,6 +33,8 @@ class builder:
         self.spawn_locations.remove(random_spawn)
         return random_spawn
     
+    def reset(self):
+        self.spawn_locations = SPAWNS.copy()
 
 
 '''

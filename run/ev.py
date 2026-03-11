@@ -11,52 +11,73 @@ Class Events:
 """
 
 class VehicleSoundEvent:
-    def __init__(self, class_index, track_index, simulation, fsm, tick):
+    def __init__(self, 
+                 class_index, 
+                 track_index, 
+                 simulation, 
+                 fsm,
+                 vehicle, 
+                 tick):
+        
         self.class_index = class_index
         self.track_index = track_index
         self.simulation = simulation
         self.fsm = fsm
-        self.active_event = False
+        self.vehicle = vehicle
         self.tick = tick
-        match class_index:
-            case 1:
-                self.vehicle = simulation.vehicle_controller.spawn_other_vehicle()
-            case 3:
-                self.vehicle = simulation.vehicle_controller.spawn_EV()
-                self.ev_run()
-            case _: return
-        
+        self.wait()
+ 
 
-    def ev_run(self):
+    def wait(self):
+        self.vehicle.set_license_plate("EV")
+        self.normal_behavior()
+        self.tick.wait_next()
+        self.run()
+
+    def run(self):
         from run import scheduler
-        while self.tick.frame_index < scheduler.END_FRAME:
-            print(f"CE({self.class_index}), TE({self.track_index}): Not active. Choosing next...")
+        while self.tick.frame_index < scheduler.END_FRAME and not self.tick.shutdown.is_set():
             chosen = random.choices([self.random_empty, self.random_siren_event],
                                     weights=[0.75, 0.25], k=1)[0]
             chosen()
-            sleep(0.1)
-        self.simulation.remove_vehicle(self.vehicle)
-            
+
+    def normal_behavior(self):
+        self.vehicle.set_lights(lightbar=0)
+        self.vehicle.ai.set_aggression(0.3)
+        self.vehicle.ai.drive_in_lane(True)
+        self.vehicle.ai.set_speed(15.65, mode="limit")
+        self.vehicle.ai.set_mode("traffic")
+
+    def abnormal_behavior(self):
+        self.vehicle.set_lights(lightbar=2)
+        self.vehicle.ai.set_aggression(0.7)
+        self.vehicle.ai.drive_in_lane(False)
+        self.vehicle.ai.set_speed(45, mode="limit")
+        self.vehicle.ai.set_mode("random")
+
     def random_siren_event(self):
+        self.abnormal_behavior()
+
         # Random duration between 10-60 seconds with 100ms hops
-        print(f"CE({self.class_index}), TE({self.track_index}): Starting siren event...")
+        print(f"CE({self.class_index}), TE({self.track_index}): Starting siren event at frame {self.tick.frame_index}.")
         event_end_frame = self.tick.frame_index + math.floor(random.uniform(50, 600))
 
-        self.vehicle.set_lights(lightbar=2)
         self.write_event()
 
-        while self.tick.frame_index < event_end_frame:
+        while self.tick.frame_index < event_end_frame and not self.tick.shutdown.is_set():
             self.tick.wait_next()
             self.write_event()
 
-        self.vehicle.set_lights(lightbar=0)
+            
 
     def random_empty(self):
+        self.normal_behavior()
+
         # Random duration between 5-30 seconds with 100ms hops
-        print(f"CE({self.class_index}), TE({self.track_index}): Starting empty event...")
+        print(f"CE({self.class_index}), TE({self.track_index}): Starting empty event at frame {self.tick.frame_index}.")
         event_end_frame = self.tick.frame_index + math.floor(random.uniform(50, 300))
-        
-        while self.tick.frame_index < event_end_frame:
+
+        while self.tick.frame_index < event_end_frame and not self.tick.shutdown.is_set():
             self.tick.wait_next()
 
     def relative_position_data(self):
@@ -85,7 +106,3 @@ class VehicleSoundEvent:
         # Random duration between 0.5-3 seconds with 100ms hops
         end_frame = self.frame_index + math.floor(random.uniform(50, 300))
     '''
-
-
-
-
