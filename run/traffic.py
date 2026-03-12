@@ -24,6 +24,7 @@ class VehicleSoundEvent:
         self.fsm = fsm
         self.vehicle = vehicle
         self.tick = tick
+        self.wait()
 
     def wait(self):
         self.vehicle.set_license_plate("TRAFFIC")
@@ -59,9 +60,9 @@ class VehicleSoundEvent:
         else:
             return (0.0, 0.0, 0.0)
     
-    def write_event(self):
+    def write_soundevent(self):
         position = self.relative_position_data()
-        self.fsm.write_event_csv(self.class_index, self.track_index, position, self.tick.frame_index)       
+        self.fsm.write_soundevent_csv(self.class_index, self.track_index, position, self.tick.frame_index)       
 
     '''
     # Horns can't be triggered via BeamNGpy
