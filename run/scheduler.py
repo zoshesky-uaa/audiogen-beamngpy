@@ -15,8 +15,8 @@ class Tick:
     def iterate(self):
         """Advance the tick and wake anyone waiting for the next frame."""
         self.frame_index += 1
-        self._event.set()
-        self._event.clear()
+        old, self._event = self._event, threading.Event()
+        old.set()
 
     def wait_next(self):
         """Block until the next tick iteration occurs."""
@@ -86,8 +86,9 @@ class Scheduler:
         self.tick.shutdown.set()
         self.tick._event.set()
         for thread in self.threads:
-            while thread.is_alive():
-                thread.join(timeout=10.0)
+            thread.join(timeout=10.0)
+            if thread.is_alive():
+                print(f"Warning: thread {thread.name} did not stop in time.")
 
 '''
 def thread_queue(count, funcs, args):

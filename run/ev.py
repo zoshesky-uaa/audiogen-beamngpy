@@ -98,7 +98,7 @@ class VehicleSoundEvent:
     
     def write_event(self):
         position = self.relative_position_data()
-        self.fsm.write_event_csv(self.class_index, self.track_index, position, self.tick.frame_index)       
+        self.fsm.write_soundevent_csv(self.class_index, self.track_index, position, self.tick.frame_index)       
 
     '''
     # Horns can't be triggered via BeamNGpy

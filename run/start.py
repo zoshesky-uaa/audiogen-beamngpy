@@ -4,7 +4,10 @@ from run.scheduler import Scheduler
 from spawns import vehicles
 from time import sleep
 import random
-
+MINIMUM_TRAFFIC_VEHICLES = 5
+MAXIMUM_TRAFFIC_VEHICLES = 10
+MINIMUM_EMERGENCY_VEHICLES = 0
+MAXIMUM_EMERGENCY_VEHICLES = 5
 
 class Simulation:
     def __init__(self):
@@ -37,31 +40,57 @@ class Simulation:
                     cfg_line = f"  Configurations: {vehicle_data['configurations']}"
                     logf.write(cfg_line + "\n")   
         '''
-    
+    def random_weather_setup(self):
+        weather_presets = ['clear', 'cloudy', 'rainy', 'stormy', 'foggy']  
+        self.current_weather = random.choice(weather_presets)  
+        self.beamng.env.set_weather_preset(self.current_weather, time=0)  
+
+    def random_tod_setup(self):
+        time_presets =  ['morning', 'noon', 'evening', 'night'] 
+        self.current_time = random.choice(time_presets)
+        match self.current_time:
+            case 'evening': self.beamng.env.set_tod(0.25)
+            case 'night': self.beamng.env.set_tod(0.5)     
+            case 'morning': self.beamng.env.set_tod(0.75)
+            case 'noon': self.beamng.env.set_tod(1)
+
+    def convert_to_imperial(self):
+        self.beamng.settings.change('units_speed', 'mph')   
+        self.beamng.settings.change('units_distance', 'mi')   
+        self.beamng.settings.apply_graphics()
+
     def scenario_setup(self, count, ai=True):
-        self.beamng.ui.display_message("Starting scenario " + str(count) + "...")
+        
+        print("Starting scenario " + str(count) + "...")
+
         self.vehicle_controller = vehicles.builder(simulation=self)
         self.scenario = Scenario(self.vehicle_controller.environment.name, ('Scenario ' + str(count)))
         self.event_schedular = Scheduler(self) 
-        #Driver
+
+        self.vehicle_controller.driver_presetup()
         self.event_schedular.append_event(0, ai=ai)
         self.scenario.make(self.beamng)
         self.beamng.scenario.load(self.scenario)
         self.beamng.scenario.start()
         self.beamng.control.pause()
-        self.beamng.ui.display_message("Scenario started.")
+
+        self.random_weather_setup()
+        self.random_tod_setup()
+        self.convert_to_imperial()
+        print("Scenario started.")
+
         self.simulation_traffic_setup()
     
     def simulation_traffic_setup(self):
-        pre_vehicles = self.beamng.vehicles.get_current().keys()
-        n_amount = random.randint(5, 20)
+        pre_vehicles = set(self.beamng.vehicles.get_current().keys())
+        n_amount = random.randint(MINIMUM_TRAFFIC_VEHICLES, MAXIMUM_TRAFFIC_VEHICLES)
         #n_parked = random.randint(5, 10)
         total = n_amount + 1
 
         # Automatic traffic
         self.beamng.traffic.spawn(max_amount=n_amount)
 
-        self.beamng.ui.display_message("Number of traffic vehicles: " + str(n_amount) + ". Setting up traffic vehicles.")
+        print("Number of traffic vehicles: " + str(n_amount) + ". Setting up traffic vehicles.")
         while len(self.beamng.vehicles.get_current()) <  (total):
             sleep(1)
 
@@ -69,27 +98,28 @@ class Simulation:
 
         for vid in traffic:
             vehicle = self.beamng.vehicles.get_current()[vid]
-            self.event_schedular.append_event(1, vehicle)
             try: 
                 vehicle.connect(self.beamng, tries=20)
+                self.event_schedular.append_event(1, vehicle)
             except Exception as e:
                 print(f"Failed to connect vehicle {vid}: {e}")
                 self.beamng.vehicles.despawn(vehicle)
                 continue
 
-        n_sirens = random.randint(0, 8)
-        self.beamng.ui.display_message("Number of emergency vehicles: " + str(n_sirens) + ". Setting up emergency vehicles.")
+        n_sirens = random.randint(MINIMUM_EMERGENCY_VEHICLES, MAXIMUM_EMERGENCY_VEHICLES)
+        print("Number of emergency vehicles: " + str(n_sirens) + ". Setting up emergency vehicles.")
         
         # Emergency Vehicle (Siren)
         for i in range(n_sirens):
             vehicle = self.vehicle_controller.emergency_vehicle_spawn()
-            self.event_schedular.append_event(3, vehicle)
             try: 
                 vehicle.connect(self.beamng, tries=20)
+                self.event_schedular.append_event(3, vehicle)
             except Exception as e:
-                print(f"Failed to connect vehicle {vid}: {e}")
+                print(f"Failed to connect vehicle {vehicle.vid}: {e}")
                 self.beamng.vehicles.despawn(vehicle)
                 continue
+
     
     def scenario_cleanup(self):
         if hasattr(self, 'event_schedular'):
