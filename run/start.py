@@ -4,10 +4,7 @@ from run.scheduler import Scheduler
 from spawns import vehicles
 from time import sleep
 import random
-MINIMUM_TRAFFIC_VEHICLES = 5
-MAXIMUM_TRAFFIC_VEHICLES = 10
-MINIMUM_EMERGENCY_VEHICLES = 0
-MAXIMUM_EMERGENCY_VEHICLES = 5
+import const
 
 class Simulation:
     def __init__(self):
@@ -83,7 +80,7 @@ class Simulation:
     
     def simulation_traffic_setup(self):
         pre_vehicles = set(self.beamng.vehicles.get_current().keys())
-        n_amount = random.randint(MINIMUM_TRAFFIC_VEHICLES, MAXIMUM_TRAFFIC_VEHICLES)
+        n_amount = random.randint(const.MINIMUM_TRAFFIC_VEHICLES, const.MAXIMUM_TRAFFIC_VEHICLES)
         #n_parked = random.randint(5, 10)
         total = n_amount + 1
 
@@ -106,7 +103,7 @@ class Simulation:
                 self.beamng.vehicles.despawn(vehicle)
                 continue
 
-        n_sirens = random.randint(MINIMUM_EMERGENCY_VEHICLES, MAXIMUM_EMERGENCY_VEHICLES)
+        n_sirens = random.randint(const.MINIMUM_EMERGENCY_VEHICLES, const.MAXIMUM_EMERGENCY_VEHICLES)
         print("Number of emergency vehicles: " + str(n_sirens) + ". Setting up emergency vehicles.")
         
         # Emergency Vehicle (Siren)

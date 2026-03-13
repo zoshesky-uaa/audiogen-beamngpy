@@ -1,6 +1,7 @@
 from time import sleep
 import math
-
+from const import MINIMUM_TRAFFIC_VEHICLES, MAXIMUM_TRAFFIC_VEHICLES, MINIMUM_EMERGENCY_VEHICLES, MAXIMUM_EMERGENCY_VEHICLES 
+import const
 """
 SoundEvent class to represent audio events in the simulation
 Class Events:
@@ -39,8 +40,7 @@ class VehicleSoundEvent:
         self.vehicle.ai.set_mode("traffic")
 
     def run(self):
-        from run import scheduler
-        while self.tick.frame_index < scheduler.END_FRAME and not self.tick.shutdown.is_set():
+        while self.tick.frame_index < const.END_FRAME and not self.tick.shutdown.is_set():
             sleep(0.1)
  
 

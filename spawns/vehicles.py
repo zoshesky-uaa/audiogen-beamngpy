@@ -1,7 +1,7 @@
 from beamngpy import Vehicle
 import random
 from spawns import west_coast_usa
-from time import sleep
+import uuid
 
 class builder:
     def __init__(self, simulation):
