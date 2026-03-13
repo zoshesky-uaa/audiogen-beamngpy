@@ -1,10 +1,7 @@
-SIMULATION_DURATION_SECONDS = 120
-TICK_RATE_SECONDS = 0.1
-END_FRAME = SIMULATION_DURATION_SECONDS * (1/TICK_RATE_SECONDS)
-
 import threading
 from time import sleep
-from run import ev, filesystem, recorder, driver,traffic
+from run import ev, filesystem, recorder, driver, traffic
+import const
 
 class Tick:
     def __init__(self):
@@ -67,19 +64,23 @@ class Scheduler:
 
     def simulate(self):
         self.simulation.beamng.control.resume()  
-        # Warmup frames
-        self.simulation.beamng.ui.display_message("Warming up scenario...")
-        while self.tick.frame_index < 30:
+        print("Warming up scenario...")
+        while self.tick.frame_index < 15*const.TICK_RATE and not self.tick.shutdown.is_set():
             self.tick.iterate()
-            sleep(TICK_RATE_SECONDS)
+            sleep(const.TICK_DURATION_SECONDS)
+
         self.tick.frame_index = 0
-        self.simulation.beamng.ui.display_message("Starting scenario loop.")
-        audio_data = recorder.AudioRec(duration=SIMULATION_DURATION_SECONDS)
-        while self.tick.frame_index < END_FRAME:
+
+        print("Starting scenario loop.")
+        audio_data = recorder.AudioRec(tick=self.tick, fsm=self.fsm)
+
+        self.fsm.startup()
+        while self.tick.frame_index < const.END_FRAME and not self.tick.shutdown.is_set():
             self.tick.iterate()
-            sleep(TICK_RATE_SECONDS)
-        recording = audio_data.stop()
-        self.fsm.write_wav(recording)
+            sleep(const.TICK_DURATION_SECONDS)
+        audio_data.stop()
+        self.fsm.shutdown()
+        
         self.simulation.beamng.control.pause()
 
     def stop_all(self):

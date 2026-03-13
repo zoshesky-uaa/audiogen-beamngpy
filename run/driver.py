@@ -1,4 +1,5 @@
 from beamngpy.sensors import Damage, RoadsSensor, Electrics
+import const
 
 class DriverRecorder:
     def __init__(self, 
@@ -27,17 +28,19 @@ class DriverRecorder:
         #if not ai:
     
     def normal_behavior(self):
+        if self.simulation.current_time != "noon":
+            self.vehicle.set_lights(headlights=1)
         self.vehicle.ai.set_aggression(0.2)
         self.vehicle.ai.drive_in_lane(True)
         self.vehicle.ai.set_speed(15.65, mode="limit")
         self.vehicle.ai.set_mode("traffic")
 
     def run(self):
-        from run import scheduler
-        while self.tick.frame_index < scheduler.END_FRAME and not self.tick.shutdown.is_set():
-            self.driver_poll()
+        self.driver_poll()
+        while self.tick.frame_index < const.END_FRAME and not self.tick.shutdown.is_set():
             if not self.tick.shutdown.is_set():
                 self.tick.wait_next()
+                self.driver_poll()
 
     def driver_poll(self):
         self.vehicle.sensors.poll()
@@ -48,7 +51,8 @@ class DriverRecorder:
         road_data = self.roads_sensor.poll()
         if not isinstance(road_data, dict):  
             # Sensor not ready yet - skip or use default values  
-            lane_center = lane_right = lane_left = lane_halfwidth = 0.0  
+            lane_center = lane_right = lane_left = lane_halfwidth = 0.0 
+            lane_data = (lane_center, lane_right, lane_left, lane_halfwidth) 
         else:  
             # Sensor ready - use dictionary format  
             lane_center = road_data["dist2CL"] * 3.281  

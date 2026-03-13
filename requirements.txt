@@ -2,3 +2,4 @@ soundfile
 sounddevice
 numpy
 beamngpy
+audioflux
