@@ -1,38 +1,16 @@
 from pathlib import Path
 import csv
-import queue
+from time import sleep
 import threading
 import numpy as np
 import const
 
 class FSM:
-    def __init__(self):
+    def __init__(self, tick):
         self.write_active = False
-        base_path = Path('trials').resolve()
-        base_path.mkdir(parents=True, exist_ok=True)
+        self.tick = tick
+        self.trial_path, self.tracking_path = self.path_mkdir()
 
-        highest_num = 0
-        # Search for existing trial directories to find the highest number
-        for child in base_path.iterdir():
-            if child.is_dir() and child.name.startswith("trial_"):
-                try:
-                    num = int(child.name.split("_")[1])
-                    highest_num = max(highest_num, num)
-                except ValueError:
-                    # Ignore folders like "trial_abc"
-                    pass
-
-        next_trial_name = f"trial_{highest_num + 1}"
-        new_trial_path = base_path / next_trial_name
-
-        # Create the new directory
-        new_trial_path.mkdir()
-
-        tracking_path = new_trial_path / "tracking"
-        tracking_path.mkdir(parents=True, exist_ok=True)
-
-        self.tracking_path = tracking_path
-        self.trial_path = new_trial_path
         self.features_storage = np.memmap(
                 self.trial_path / 'training_features.npy', 
                 dtype='float32', 
@@ -40,49 +18,56 @@ class FSM:
                 shape=(const.TOTAL_FRAMES, const.N_INPUTS, const.N_BINS)
             )
         
-        # Single writer thread with queue. Only this thread touches open CSV handles.
-        self._csv_queue = queue.Queue()
-        self.open_files = {}
-        self.csv_writers = {}
-        self._sentinel = object() # Shutdown signaling
-        self._csv_writer_thread = threading.Thread(target=self._csv_writer_loop, name="fsm-csv-writer", daemon=True)
-        self._csv_writer_thread.start()
+        self.ev_event_buffer = []
+        # Buffer all poossible emergency vehicle events
+        for i in range (0, const.MAXIMUM_EMERGENCY_VEHICLES):
+            self.ev_event_buffer.append(EventObj(3,i, (0.0, 0.0, 0.0)))
 
+        self.driver_buffer = DriverData()
 
-    def write_soundevent_csv(self, class_index, track_index, position, frame_index):
+    def write_soundevent_csv(self, track_index, position):
         if self.write_active:
-            csv_file = self.trial_path / f"{class_index}_{track_index}_soundevent.csv"
-            row = [frame_index, class_index, track_index, position[0], position[1], position[2]]
-            self._csv_queue.put((csv_file, row))
+            self.ev_event_buffer[track_index].set_position(position)
 
     # Collection of primitives about the driver for later use:
     # Poll: Damage, Steering, Braking, Velocity (x,y,z), Lane Distances (left line, center, right, halfwidth; remove the max to determine directionality)
-    def write_driver_data_csv(self, frame_index, velocity, steering, braking, lane_data, damage):
+    def write_driver_csv(self, velocity, steering, braking, lane_data, damage):
         if self.write_active:
-            csv_file = self.tracking_path / f"drive_data.csv"
-            row = [frame_index, damage, steering, braking, velocity[0], velocity[1], velocity[2], lane_data[0], lane_data[1], lane_data[2], lane_data[3], damage]
-            self._csv_queue.put((csv_file, row))
+            self.driver_buffer.set_data(damage, steering, braking, velocity, lane_data)
 
-    def _csv_writer_loop(self):
-        while True:
-            item = self._csv_queue.get()
-            if item is self._sentinel:
-                self._csv_queue.task_done()
-                break
+    def _open_csv_file(self, csv_path):
+        try:
+            csv_path.parent.mkdir(parents=True, exist_ok=True)
+            f = open(csv_path, "a", newline="")
+            self.open_files[csv_path] = f
+            self.csv_writers[csv_path] = csv.writer(f)
+        except Exception as e:
+            print(f"Failed to open CSV file {csv_path}: {e}")
 
-            csv_file, row = item
-            csv_path = str(csv_file)
-            try:
-                if csv_path not in self.open_files:
-                    csv_file.parent.mkdir(parents=True, exist_ok=True)
-                    f = open(csv_file, "a", newline="")
-                    self.open_files[csv_path] = f
-                    self.csv_writers[csv_path] = csv.writer(f)
+    def _csv_writer(self):
+        self.tick.waited_action_iterate(self._csv_write, 0, None, self.write_active)
 
-                self.csv_writers[csv_path].writerow(row)
-            finally:
-                self._csv_queue.task_done()
-
+    def _csv_write(self):
+        for (csvtype, csv) in self.trial_csvs.items():
+                try:
+                    match csvtype:
+                        case "soundevent":
+                            for event in self.ev_event_buffer:
+                                row = [self.tick.frame_index, *event.row()]        
+                                if csv not in self.open_files:
+                                    self._open_csv_file(csv)
+                                self.csv_writers[csv].writerow(row)
+                        case "driver":
+                            row = [self.tick.frame_index, *self.driver_buffer.row()]
+                            if csv not in self.open_files:
+                                self._open_csv_file(csv)
+                            self.csv_writers[csv].writerow(row)
+                        case _: 
+                            print(f"Unknown CSV type: {csvtype}") 
+                            return
+                except Exception as e:
+                    print(f"Failed to write to CSV file: {e}") 
+                    
     def _close_open_csv_handles(self):
         for path_key, f in self.open_files.items():
             try:
@@ -95,10 +80,8 @@ class FSM:
 
     def shutdown(self):
         self.write_active = False
+        self.tick.iterate()
         try:
-            # Signal completion and wait until all queued CSV work is done.
-            self._csv_queue.put(self._sentinel)
-            self._csv_queue.join()
             self._csv_writer_thread.join(timeout=10.0)
         except Exception as e:
             print(f"Error occurred while shutting down CSV writer: {e}")
@@ -107,6 +90,37 @@ class FSM:
 
     def startup(self):
         self.write_active = True
+        self._csv_writer_thread = threading.Thread(target=self._csv_writer, name="fsm-csv-writer", daemon=True)
+        self._csv_writer_thread.start()
+
+    def path_mkdir(self):
+        base_path = Path('trials').resolve()
+        base_path.mkdir(parents=True, exist_ok=True)
+        highest_num = 0
+        # Search for existing trial directories to find the highest number
+        for child in base_path.iterdir():
+            if child.is_dir() and child.name.startswith("trial_"):
+                try:
+                    num = int(child.name.split("_")[1])
+                    highest_num = max(highest_num, num)
+                except ValueError:
+                    pass
+        next_trial_name = f"trial_{highest_num + 1}"
+        new_trial_path = base_path / next_trial_name
+        new_trial_path.mkdir()
+
+        tracking_path = new_trial_path / "tracking"
+        tracking_path.mkdir(parents=True, exist_ok=True)
+        
+        self.trial_csvs = {
+            "soundevent": new_trial_path / f"soundevents.csv",
+            "driver": tracking_path / f"driver.csv"
+        }
+
+        self.open_files = {}
+        self.csv_writers = {}
+        return new_trial_path, tracking_path
+    
 
     def __enter__(self):
         return self
@@ -122,3 +136,48 @@ class FSM:
             self.shutdown()
         except Exception:
             pass
+
+class EventObj:
+    def __init__(self, class_index, track_index, position):
+        self.class_index = class_index
+        self.track_index = track_index
+        self.position = position
+    
+    def reset(self):
+        self.position = (0.0, 0.0, 0.0)
+
+    def set_position(self, position):
+        self.position = position
+    
+    def row(self):
+        return [self.class_index, self.track_index, *self.position]
+
+class DriverData:
+    def __init__(self, 
+                 damage=0.0, 
+                 steering=0.0, 
+                 braking=0.0, 
+                 velocity=(0.0, 0.0, 0.0), 
+                 lane_data=(0.0, 0.0, 0.0, 0.0)):
+        self.damage = damage
+        self.steering = steering
+        self.braking = braking
+        self.velocity = velocity
+        self.lane_data = lane_data
+
+    def reset(self):
+        self.damage = 0.0
+        self.steering = 0.0
+        self.braking = 0.0
+        self.velocity = (0.0, 0.0, 0.0)
+        self.lane_data = (0.0, 0.0, 0.0, 0.0)
+
+    def set_data(self, damage, steering, braking, velocity, lane_data):
+        self.damage = damage
+        self.steering = steering
+        self.braking = braking
+        self.velocity = velocity
+        self.lane_data = lane_data
+    
+    def row(self):
+        return [self.damage, self.steering, self.braking, *self.velocity, *self.lane_data]

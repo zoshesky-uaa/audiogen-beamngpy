@@ -25,16 +25,12 @@ class VehicleSoundEvent:
         self.fsm = fsm
         self.vehicle = vehicle
         self.tick = tick
-        self.wait()
+        self.run()
  
 
-    def wait(self):
-        self.vehicle.set_license_plate("EV")
-        self.normal_behavior()
-        self.tick.wait_next()
-        self.run()
-
     def run(self):
+        self.vehicle.set_license_plate("EV")
+        self.tick.waited_action(self.normal_behavior)
         while self.tick.frame_index < const.END_FRAME and not self.tick.shutdown.is_set():
             chosen = random.choices([self.random_empty, self.random_siren_event],
                                     weights=[0.70, 0.30], k=1)[0]
@@ -49,8 +45,8 @@ class VehicleSoundEvent:
 
     def abnormal_behavior(self):
         self.vehicle.set_lights(lightbar=2)
-        self.vehicle.ai.set_aggression(0.7)
-        self.vehicle.ai.drive_in_lane(False)
+        self.vehicle.ai.set_aggression(0.4)
+        self.vehicle.ai.drive_in_lane(True)
         self.vehicle.ai.set_speed(45, mode="limit")
         behaviors = [  
             lambda: self.vehicle.ai.set_target(self.simulation.vehicle_controller.driver.vid, mode="chase"),  
@@ -61,20 +57,14 @@ class VehicleSoundEvent:
 
     def random_siren_event(self):
         position = self.position_data()
-        if (position < 1000):
+        if (position < 300):
             self.abnormal_behavior()
 
             # Random duration between 10-60 seconds with 100ms hops
             print(f"CE({self.class_index}), TE({self.track_index}): Starting siren event at frame {self.tick.frame_index}, at distance {position:.2f} m.")
             event_end_frame = self.tick.frame_index + math.floor(random.uniform(10*const.TICK_RATE, 60*const.TICK_RATE))
 
-            self.write_event(blank=True)
-
-            while self.tick.frame_index < event_end_frame and not self.tick.shutdown.is_set():
-                self.tick.wait_next()
-                self.write_event(blank=True)
-
-            
+            self.tick.waited_action_iterate(self.write_event, self.tick.frame_index, event_end_frame)
 
     def random_empty(self):
         self.normal_behavior()
@@ -82,11 +72,10 @@ class VehicleSoundEvent:
         # Random duration between 5-30 seconds with 100ms hops
         print(f"CE({self.class_index}), TE({self.track_index}): Starting empty event at frame {self.tick.frame_index}.")
         event_end_frame = self.tick.frame_index + math.floor(random.uniform(5*const.TICK_RATE, 30*const.TICK_RATE))
-        self.write_event()
-        while self.tick.frame_index < event_end_frame and not self.tick.shutdown.is_set():
-            self.tick.wait_next()
+        
+        self.tick.waited_action_iterate(self.write_reset, self.tick.frame_index, event_end_frame)
 
-    def position_data(self, relative=False, blank=False):
+    def position_data(self, relative=False):
         self.simulation.vehicle_controller.driver.sensors.poll()  
         self.vehicle.sensors.poll()     
         origin_position = self.simulation.vehicle_controller.driver.state['pos']  
@@ -99,14 +88,17 @@ class VehicleSoundEvent:
 
         if (magnitude > 0) and relative:
             return (dx / magnitude, dy / magnitude, dz / magnitude)
-        elif relative or blank:
+        elif relative:
             return (0.0, 0.0, 0.0)
         else:
             return (magnitude)
     
-    def write_event(self, blank=False):
-        position = self.position_data(relative=True, blank=blank)
-        self.fsm.write_soundevent_csv(self.class_index, self.track_index, position, self.tick.frame_index)       
+    def write_event(self):
+        position = self.position_data(relative=True)
+        self.fsm.write_soundevent_csv(self.track_index, position)       
+    
+    def write_reset(self):
+        self.fsm.write_soundevent_csv(self.track_index, (0.0, 0.0, 0.0))
 
     '''
     # Horns can't be triggered via BeamNGpy
