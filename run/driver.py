@@ -14,7 +14,8 @@ class DriverRecorder:
         self.wait(ai=ai)
     
     def wait(self, ai=True):
-        self.tick.wait_next()
+        self.tick.waited_action()
+        #Write a else case for this for manual control in the future
         self.simulation.vehicle_controller.switch_to_driver()
         if ai:
             self.normal_behavior()
@@ -36,11 +37,14 @@ class DriverRecorder:
         self.vehicle.ai.set_mode("traffic")
 
     def run(self):
-        self.driver_poll()
-        while self.tick.frame_index < const.END_FRAME and not self.tick.shutdown.is_set():
-            if not self.tick.shutdown.is_set():
-                self.tick.wait_next()
-                self.driver_poll()
+        ref_frame = 0
+        while not self.tick.shutdown.is_set():
+            self.driver_poll()
+            frame = self.tick.wait_next(ref_frame)
+            if frame is None:
+                break
+            ref_frame = frame
+
 
     def driver_poll(self):
         self.vehicle.sensors.poll()
@@ -60,4 +64,4 @@ class DriverRecorder:
             lane_left = road_data["dist2Left"] * 3.281  
             lane_halfwidth = road_data["halfWidth"] * 3.281  
             lane_data = (lane_center, lane_right, lane_left, lane_halfwidth) # Convert m to ft
-        self.fsm.write_driver_data_csv(self.tick.frame_index, velocity, steering, braking, lane_data, damage)
+        self.fsm.write_driver_csv(velocity, steering, braking, lane_data, damage)

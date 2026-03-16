@@ -4,25 +4,57 @@ from run import ev, filesystem, recorder, driver, traffic
 import const
 
 class Tick:
-    def __init__(self):
+    def __init__(self,delay):
         self.frame_index = 0
-        self._event = threading.Event()
+        self._cond = threading.Condition()
         self.shutdown = threading.Event()
+        self.delay = delay
     
     def iterate(self):
         """Advance the tick and wake anyone waiting for the next frame."""
-        self.frame_index += 1
-        old, self._event = self._event, threading.Event()
-        old.set()
+        with self._cond:
+            self.frame_index += 1
+            self._cond.notify_all()
+        sleep(self.delay)
 
-    def wait_next(self):
+    def wait_next(self, last_frame):
         """Block until the next tick iteration occurs."""
-        self._event.wait()
+        with self._cond:
+            self._cond.wait_for(
+                lambda: self.shutdown.is_set() or self.frame_index > last_frame
+            )
+            if self.shutdown.is_set():
+                return None
+            return self.frame_index
+
+    def waited_action(self, action=None, last_frame=0):
+        if action:
+            action()
+        frame = self.wait_next(last_frame)
+        last_frame = frame
+
+    def waited_action_iterate(self, action=None, last_frame=0, max_frame=None, secondary_cond = None):
+        """Helper to perform an action every tick, with an iterate in between."""
+        while not self.shutdown.is_set():
+            if (max_frame is not None and last_frame >= max_frame) or not secondary_cond:
+                break
+            if action:
+                action()
+            frame = self.wait_next(last_frame)
+            if frame is None:
+                break
+            last_frame = frame
+
+    def stop(self):
+        self.shutdown.set()
+        with self._cond:
+            self._cond.notify_all()
+
 
 class Scheduler:
     def __init__(self, simulation):
-        self.fsm = filesystem.FSM()
-        self.tick = Tick()
+        self.tick = Tick(delay=const.TICK_DURATION_SECONDS)
+        self.fsm = filesystem.FSM(self.tick)      
         self.simulation = simulation
         self.threads = []
         self.class_events = []
@@ -67,7 +99,6 @@ class Scheduler:
         print("Warming up scenario...")
         while self.tick.frame_index < 15*const.TICK_RATE and not self.tick.shutdown.is_set():
             self.tick.iterate()
-            sleep(const.TICK_DURATION_SECONDS)
 
         self.tick.frame_index = 0
 
@@ -77,15 +108,13 @@ class Scheduler:
         self.fsm.startup()
         while self.tick.frame_index < const.END_FRAME and not self.tick.shutdown.is_set():
             self.tick.iterate()
-            sleep(const.TICK_DURATION_SECONDS)
         audio_data.stop()
         self.fsm.shutdown()
-        
+
         self.simulation.beamng.control.pause()
 
     def stop_all(self):
-        self.tick.shutdown.set()
-        self.tick._event.set()
+        self.tick.stop()
         for thread in self.threads:
             thread.join(timeout=10.0)
             if thread.is_alive():
