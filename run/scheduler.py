@@ -9,19 +9,38 @@ class Tick:
         self._cond = threading.Condition()
         self.shutdown = threading.Event()
         self.delay = delay
+        self.on = False
     
-    def iterate(self):
-        """Advance the tick and wake anyone waiting for the next frame."""
+    def start(self, endframe):
         with self._cond:
+            self.on = True
+            self._cond.notify_all()
+        while (self.frame_index < endframe) and (not self.shutdown.is_set()) and self.on:
+            self.iterate()
+
+    def stop(self):
+        self.shutdown.set()
+        with self._cond:
+            self._cond.notify_all()
+
+    def reset(self):
+        with self._cond:
+            self.on = False
+            self.frame_index = 0
+            self._cond.notify_all()
+
+    def iterate(self):
+        with self._cond:
+            if not self.on:
+                return
             self.frame_index += 1
             self._cond.notify_all()
         sleep(self.delay)
 
     def wait_next(self, last_frame):
-        """Block until the next tick iteration occurs."""
         with self._cond:
             self._cond.wait_for(
-                lambda: self.shutdown.is_set() or self.frame_index > last_frame
+                lambda: self.shutdown.is_set() or (self.frame_index > last_frame and self.on)
             )
             if self.shutdown.is_set():
                 return None
@@ -31,12 +50,13 @@ class Tick:
         if action:
             action()
         frame = self.wait_next(last_frame)
-        last_frame = frame
+        return frame
 
-    def waited_action_iterate(self, action=None, last_frame=0, max_frame=None, secondary_cond = None):
-        """Helper to perform an action every tick, with an iterate in between."""
+    def waited_action_iterate(self, action=None, last_frame=0, max_frame=None, cond_func = None):
         while not self.shutdown.is_set():
-            if (max_frame is not None and last_frame >= max_frame) or not secondary_cond:
+            if max_frame is not None and last_frame >= max_frame:
+                break
+            if cond_func is not None and not cond_func():
                 break
             if action:
                 action()
@@ -44,12 +64,6 @@ class Tick:
             if frame is None:
                 break
             last_frame = frame
-
-    def stop(self):
-        self.shutdown.set()
-        with self._cond:
-            self._cond.notify_all()
-
 
 class Scheduler:
     def __init__(self, simulation):
@@ -63,17 +77,20 @@ class Scheduler:
         match class_index:
             case 0:
                 thread = threading.Thread(target=driver.DriverRecorder, 
-                                          args=(self.simulation,
+                                          args=(self.simulation.vehicle_controller.driver,
+                                                self.simulation.dispatcher,
                                                 self.fsm, 
                                                 self.tick,
+                                                self.simulation,
                                                 ai), 
                                           daemon=True)
                 self.threads.append(thread)
             case 1:
                 thread = threading.Thread(target=traffic.VehicleSoundEvent, 
-                                          args=(class_index,
+                                args=(self.simulation.vehicle_controller.driver,
+                                                self.simulation.dispatcher,
+                                                class_index,
                                                 self.class_events.count(1),
-                                                self.simulation,
                                                 self.fsm,
                                                 vehicle, 
                                                 self.tick), 
@@ -82,9 +99,10 @@ class Scheduler:
                 self.threads.append(thread)
             case 3:
                 thread = threading.Thread(target=ev.VehicleSoundEvent, 
-                                        args=(class_index,
+                                        args=(self.simulation.vehicle_controller.driver,
+                                            self.simulation.dispatcher,
+                                            class_index,
                                             self.class_events.count(3),
-                                            self.simulation,
                                             self.fsm,
                                             vehicle, 
                                             self.tick), 
@@ -95,23 +113,22 @@ class Scheduler:
         thread.start()  
 
     def simulate(self):
-        self.simulation.beamng.control.resume()  
-        print("Warming up scenario...")
-        while self.tick.frame_index < 15*const.TICK_RATE and not self.tick.shutdown.is_set():
-            self.tick.iterate()
+        self.simulation.dispatcher.send(self.simulation.beamng.control.resume)
 
-        self.tick.frame_index = 0
+        print("Warming up scenario...")
+        self.tick.start(15*const.TICK_RATE)
+        self.tick.reset()
 
         print("Starting scenario loop.")
         audio_data = recorder.AudioRec(tick=self.tick, fsm=self.fsm)
-
         self.fsm.startup()
-        while self.tick.frame_index < const.END_FRAME and not self.tick.shutdown.is_set():
-            self.tick.iterate()
+        self.tick.start(const.END_FRAME)
+
+        self.tick.stop()
         audio_data.stop()
         self.fsm.shutdown()
 
-        self.simulation.beamng.control.pause()
+        self.simulation.dispatcher.send(self.simulation.beamng.control.pause)
 
     def stop_all(self):
         self.tick.stop()
@@ -119,14 +136,3 @@ class Scheduler:
             thread.join(timeout=10.0)
             if thread.is_alive():
                 print(f"Warning: thread {thread.name} did not stop in time.")
-
-'''
-def thread_queue(count, funcs, args):
-    threads = []
-    for i in range(count):
-        tick = threading.Event()
-        thread = threading.Thread(target=funcs[i], args=(args[i], tick), daemon=True)
-        threads.append((thread, tick))
-        thread.start()
-    return threads
-'''
