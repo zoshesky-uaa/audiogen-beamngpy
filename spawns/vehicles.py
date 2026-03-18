@@ -1,7 +1,6 @@
 from beamngpy import Vehicle
 import random
 from spawns import west_coast_usa
-import uuid
 
 class builder:
     def __init__(self, simulation):
@@ -14,7 +13,7 @@ class builder:
     def emergency_vehicle_spawn(self):
         spawn = self.environment.random_location()
         ev = self.random_EV()
-        self.simulation.beamng.vehicles.spawn(ev, pos=spawn[0], rot_quat=spawn[1], cling=True)
+        self.simulation.dispatcher.send(self.simulation.beamng.vehicles.spawn, ev, pos=spawn[0], rot_quat=spawn[1], cling=True)
         return ev
     
     def driver_presetup(self):
@@ -22,11 +21,11 @@ class builder:
         driver = self.random_vehicle()
         # Store the driver reference
         self.driver = driver  
-        self.simulation.scenario.add_vehicle(driver, pos=spawn[0], rot_quat=spawn[1], cling=True)
+        self.simulation.dispatcher.send(self.simulation.scenario.add_vehicle, driver, pos=spawn[0], rot_quat=spawn[1], cling=True)
         return driver
 
     def switch_to_driver(self):
-        self.simulation.beamng.vehicles.switch(self.driver)
+        self.simulation.dispatcher.send(self.simulation.beamng.vehicles.switch,self.driver)
 
     def random_EV(self):
         ev = random.choice(self.EV)

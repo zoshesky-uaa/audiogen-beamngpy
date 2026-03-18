@@ -1,6 +1,7 @@
-from beamngpy import BeamNGpy, Scenario
+from beamngpy import BeamNGpy, Scenario, Vehicle
 from beamngpy.logging import BNGDisconnectedError
-from run.scheduler import Scheduler
+from run import scheduler, dispatcher
+import threading
 from spawns import vehicles
 from time import sleep
 import random
@@ -21,55 +22,44 @@ class Simulation:
                 print("Retrying connection...")  
                 sleep(5)
         self.beamng.settings.set_nondeterministic() 
+        self.on = True
+        self.dispatcher = dispatcher.Dispatcher(lambda: self.on)
+        self.dispatcher_thread = threading.Thread(target=self.dispatcher.run, daemon=True)
+        self.dispatcher_thread.start()
 
-        '''
-        available = self.beamng.vehicles.get_available()
-        # prepare a log file next to the script
-        log_path = Path(__file__).parent / "vehicle_catalog.txt"
-        with open(log_path, "w", encoding="utf-8") as logf:
-            # Access the nested 'vehicles' dictionary
-            vehicles_dict = available['vehicles']
-            for key in vehicles_dict.keys():
-                vehicle_data = vehicles_dict[key]
-                line = f"Vehicle: {vehicle_data['name']}"
-                logf.write(line + "\n")
-                if 'configurations' in vehicle_data:
-                    cfg_line = f"  Configurations: {vehicle_data['configurations']}"
-                    logf.write(cfg_line + "\n")   
-        '''
     def random_weather_setup(self):
         weather_presets = ['clear', 'cloudy', 'rainy', 'stormy', 'foggy']  
         self.current_weather = random.choice(weather_presets)  
-        self.beamng.env.set_weather_preset(self.current_weather, time=0)  
+        self.dispatcher.send(self.beamng.env.set_weather_preset, self.current_weather, time=5)
 
     def random_tod_setup(self):
         time_presets =  ['morning', 'noon', 'evening', 'night'] 
         self.current_time = random.choice(time_presets)
         match self.current_time:
-            case 'evening': self.beamng.env.set_tod(0.25)
-            case 'night': self.beamng.env.set_tod(0.5)     
-            case 'morning': self.beamng.env.set_tod(0.75)
-            case 'noon': self.beamng.env.set_tod(1)
+            case 'evening': self.dispatcher.send(self.beamng.env.set_tod, 0.25)
+            case 'night': self.dispatcher.send(self.beamng.env.set_tod, 0.5)
+            case 'morning': self.dispatcher.send(self.beamng.env.set_tod, 0.75)
+            case 'noon': self.dispatcher.send(self.beamng.env.set_tod, 1)
 
     def convert_to_imperial(self):
-        self.beamng.settings.change('units_speed', 'mph')   
-        self.beamng.settings.change('units_distance', 'mi')   
-        self.beamng.settings.apply_graphics()
+        self.dispatcher.send(self.beamng.settings.change, 'units_speed', 'mph')
+        self.dispatcher.send(self.beamng.settings.change, 'units_distance', 'mi')
+        self.dispatcher.send(self.beamng.settings.apply_graphics)
 
     def scenario_setup(self, count, ai=True):
         
         print("Starting scenario " + str(count) + "...")
-
         self.vehicle_controller = vehicles.builder(simulation=self)
         self.scenario = Scenario(self.vehicle_controller.environment.name, ('Scenario ' + str(count)))
-        self.event_schedular = Scheduler(self) 
+        self.event_schedular = scheduler.Scheduler(self) 
 
         self.vehicle_controller.driver_presetup()
         self.event_schedular.append_event(0, ai=ai)
-        self.scenario.make(self.beamng)
-        self.beamng.scenario.load(self.scenario)
-        self.beamng.scenario.start()
-        self.beamng.control.pause()
+        #Send sync for blocking each step
+        self.dispatcher.send_sync(self.scenario.make, self.beamng)
+        self.dispatcher.send_sync(self.beamng.scenario.load, self.scenario)
+        self.dispatcher.send_sync(self.beamng.scenario.start)
+        self.dispatcher.send_sync(self.beamng.control.pause)
 
         self.random_weather_setup()
         self.random_tod_setup()
@@ -79,30 +69,35 @@ class Simulation:
         self.simulation_traffic_setup()
     
     def simulation_traffic_setup(self):
-        pre_vehicles = set(self.beamng.vehicles.get_current().keys())
-        n_amount = random.randint(const.MINIMUM_TRAFFIC_VEHICLES, const.MAXIMUM_TRAFFIC_VEHICLES)
-        #n_parked = random.randint(5, 10)
-        total = n_amount + 1
+        # ---- Return values needed (send/sync)---- #
+        pre_vehiclelist = self.dispatcher.send_sync(self.beamng.vehicles.get_current)
+        if isinstance(pre_vehiclelist, dict) and all(isinstance(v, Vehicle) for v in pre_vehiclelist.values()):
+            n_amount = random.randint(const.MINIMUM_TRAFFIC_VEHICLES, const.MAXIMUM_TRAFFIC_VEHICLES)
+            #n_parked = random.randint(5, 10)
+            total = n_amount + 1
 
-        # Automatic traffic
-        self.beamng.traffic.spawn(max_amount=n_amount)
+            # Automatic traffic, blocking
+            self.dispatcher.send_sync(self.beamng.traffic.spawn, max_amount=n_amount)
 
-        print("Number of traffic vehicles: " + str(n_amount) + ". Setting up traffic vehicles.")
-        while len(self.beamng.vehicles.get_current()) <  (total):
-            sleep(1)
+            print("Number of traffic vehicles: " + str(n_amount) + ". Setting up traffic vehicles.")
+            # Unsafe
+            while len(self.dispatcher.send_sync(self.beamng.vehicles.get_current)) <  (total):
+                sleep(1)
 
-        traffic = self.beamng.vehicles.get_current().keys() - pre_vehicles
-
-        for vid in traffic:
-            vehicle = self.beamng.vehicles.get_current()[vid]
-            try: 
-                vehicle.connect(self.beamng, tries=20)
-                self.event_schedular.append_event(1, vehicle)
-            except Exception as e:
-                print(f"Failed to connect vehicle {vid}: {e}")
-                self.beamng.vehicles.despawn(vehicle)
-                continue
-
+            vehiclelist = self.dispatcher.send_sync(self.beamng.vehicles.get_current)
+            if isinstance(vehiclelist, dict) and all(isinstance(v, Vehicle) for v in vehiclelist.values()):
+                traffic = vehiclelist.keys() - pre_vehiclelist.keys()
+                
+                for vid in traffic:
+                    vehicle = vehiclelist[vid]
+                    try: 
+                        self.dispatcher.send_sync(vehicle.connect, self.beamng, tries=20)
+                        self.event_schedular.append_event(1, vehicle)
+                    except Exception as e:
+                        print(f"Failed to connect vehicle {vid}: {e}")
+                        self.dispatcher.send(self.beamng.vehicles.despawn, vehicle)
+                        continue
+            
         n_sirens = random.randint(const.MINIMUM_EMERGENCY_VEHICLES, const.MAXIMUM_EMERGENCY_VEHICLES)
         print("Number of emergency vehicles: " + str(n_sirens) + ". Setting up emergency vehicles.")
         
@@ -110,11 +105,11 @@ class Simulation:
         for i in range(n_sirens):
             vehicle = self.vehicle_controller.emergency_vehicle_spawn()
             try: 
-                vehicle.connect(self.beamng, tries=20)
+                self.dispatcher.send_sync(vehicle.connect, self.beamng, tries=20)
                 self.event_schedular.append_event(3, vehicle)
             except Exception as e:
                 print(f"Failed to connect vehicle {vehicle.vid}: {e}")
-                self.beamng.vehicles.despawn(vehicle)
+                self.dispatcher.send(self.beamng.vehicles.despawn, vehicle)
                 continue
 
     
@@ -123,13 +118,17 @@ class Simulation:
             self.event_schedular.stop_all()
             self.event_schedular = None
         if hasattr(self, 'scenario'):
-            self.beamng.scenario.stop()
-            self.scenario.delete(self.beamng)
+            self.dispatcher.send(self.beamng.scenario.stop)
+            self.dispatcher.send(self.scenario.delete, self.beamng)
             self.scenario = None  
         if hasattr(self, 'vehicle_controller'):
-            self.vehicle_controller.reset()
+            self.dispatcher.send(self.vehicle_controller.reset)
             self.vehicle_controller = None
 
 
     def close(self):
-        self.beamng.close()
+        self.dispatcher.send(self.beamng.close)
+        sleep(10)
+        self.on = False
+        self.dispatcher_thread.join(timeout=10.0)
+        

@@ -11,17 +11,19 @@ Class Events:
 """
 
 class VehicleSoundEvent:
-    def __init__(self, 
+    def __init__(self,
+                 driver,
+                 dispatcher, 
                  class_index, 
                  track_index, 
-                 simulation, 
                  fsm,
                  vehicle, 
                  tick):
         
         self.class_index = class_index
         self.track_index = track_index
-        self.simulation = simulation
+        self.dispatcher = dispatcher
+        self.driver = driver
         self.fsm = fsm
         self.vehicle = vehicle
         self.tick = tick
@@ -29,28 +31,26 @@ class VehicleSoundEvent:
  
 
     def run(self):
-        self.vehicle.set_license_plate("EV")
+        self.dispatcher.send(self.vehicle.set_license_plate, "EV")
         self.tick.waited_action(self.normal_behavior)
-        while self.tick.frame_index < const.END_FRAME and not self.tick.shutdown.is_set():
-            chosen = random.choices([self.random_empty, self.random_siren_event],
-                                    weights=[0.70, 0.30], k=1)[0]
-            chosen()
+        self.tick.waited_action_iterate(random.choices([self.random_empty, self.random_siren_event],
+                                    weights=[0.70, 0.30], k=1)[0])
 
     def normal_behavior(self):
-        self.vehicle.set_lights(lightbar=0)
-        self.vehicle.ai.set_aggression(0.3)
-        self.vehicle.ai.drive_in_lane(True)
-        self.vehicle.ai.set_speed(15.65, mode="limit")
-        self.vehicle.ai.set_mode("traffic")
+        self.dispatcher.send(self.vehicle.set_lights, lightbar=0)
+        self.dispatcher.send(self.vehicle.ai.set_aggression, 0.3)
+        self.dispatcher.send(self.vehicle.ai.drive_in_lane, True)
+        self.dispatcher.send(self.vehicle.ai.set_speed, 15.65, mode="limit")
+        self.dispatcher.send(self.vehicle.ai.set_mode, "traffic")
 
     def abnormal_behavior(self):
-        self.vehicle.set_lights(lightbar=2)
-        self.vehicle.ai.set_aggression(0.4)
-        self.vehicle.ai.drive_in_lane(True)
-        self.vehicle.ai.set_speed(45, mode="limit")
+        self.dispatcher.send(self.vehicle.set_lights, lightbar=2)
+        self.dispatcher.send(self.vehicle.ai.set_aggression, 0.4)
+        self.dispatcher.send(self.vehicle.ai.drive_in_lane, True)
+        self.dispatcher.send(self.vehicle.ai.set_speed, 45, mode="limit")
         behaviors = [  
-            lambda: self.vehicle.ai.set_target(self.simulation.vehicle_controller.driver.vid, mode="chase"),  
-            lambda: self.vehicle.ai.set_mode("random")  
+            lambda: self.dispatcher.send(self.vehicle.ai.set_target, self.driver.vid, mode="chase"),  
+            lambda: self.dispatcher.send(self.vehicle.ai.set_mode, "random")  
         ]  
         behavior = random.choices(behaviors, weights=[0.5, 0.5], k=1)[0]  
         behavior()
@@ -76,11 +76,13 @@ class VehicleSoundEvent:
         self.tick.waited_action_iterate(self.write_reset, self.tick.frame_index, event_end_frame)
 
     def position_data(self, relative=False):
-        self.simulation.vehicle_controller.driver.sensors.poll()  
-        self.vehicle.sensors.poll()     
-        origin_position = self.simulation.vehicle_controller.driver.state['pos']  
-        sound_position = self.vehicle.state['pos']
-                
+        # ---- Return values needed (send/sync)---- #
+        self.dispatcher.send_sync(self.driver.sensors.poll)
+        self.dispatcher.send_sync(self.vehicle.sensors.poll)
+
+        origin_position = self.driver.state['pos']
+        sound_position =  self.vehicle.state['pos']
+
         dx = origin_position[0] - sound_position[0]
         dy = origin_position[1] - sound_position[1]
         dz = origin_position[2] - sound_position[2]
@@ -95,14 +97,7 @@ class VehicleSoundEvent:
     
     def write_event(self):
         position = self.position_data(relative=True)
-        self.fsm.write_soundevent_csv(self.track_index, position)       
+        self.fsm.write_soundevent_csv(self.class_index, self.track_index, position)       
     
     def write_reset(self):
-        self.fsm.write_soundevent_csv(self.track_index, (0.0, 0.0, 0.0))
-
-    '''
-    # Horns can't be triggered via BeamNGpy
-    def random_honk_event(self):
-        # Random duration between 0.5-3 seconds with 100ms hops
-        end_frame = self.frame_index + math.floor(random.uniform(50, 300))
-    '''
+        self.fsm.write_soundevent_csv(self.class_index, self.track_index, (0.0, 0.0, 0.0))

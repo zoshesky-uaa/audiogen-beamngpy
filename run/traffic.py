@@ -10,39 +10,47 @@ Class Events:
 """
 
 class VehicleSoundEvent:
-    def __init__(self, 
+    def __init__(self,
+                 driver,
+                 dispatcher, 
                  class_index, 
-                 track_index, 
-                 simulation, 
+                 track_index,  
                  fsm, 
                  vehicle,
                  tick):
         
         self.class_index = class_index
         self.track_index = track_index
-        self.simulation = simulation
+        self.dispatcher = dispatcher
+        self.driver = driver
         self.fsm = fsm
         self.vehicle = vehicle
         self.tick = tick
         self.run()
 
     def run(self):
-        self.vehicle.set_license_plate("TRAFFIC")
+        self.dispatcher.send(self.vehicle.set_license_plate, "TRAFFIC")
         self.tick.waited_action(self.normal_behavior)
         self.tick.waited_action_iterate()
 
     def normal_behavior(self):
-        self.vehicle.ai.set_aggression(0.2)
-        self.vehicle.ai.drive_in_lane(True)
-        self.vehicle.ai.set_speed(15.65, mode="limit")
-        self.vehicle.ai.set_mode("traffic")
+        self.dispatcher.send(self.vehicle.ai.set_aggression, 0.2)
+        self.dispatcher.send(self.vehicle.ai.drive_in_lane, True)
+        self.dispatcher.send(self.vehicle.ai.set_speed, 15.65, mode="limit")
+        self.dispatcher.send(self.vehicle.ai.set_mode, "traffic")
 
     def position_data(self, relative=False):
-        self.simulation.vehicle_controller.driver.sensors.poll()  
-        self.vehicle.sensors.poll()     
-        origin_position = self.simulation.vehicle_controller.driver.state['pos']  
-        sound_position = self.vehicle.state['pos']
-                
+        def _get_positions():
+            self.driver.sensors.poll()
+            self.vehicle.sensors.poll()
+            driver_state = self.driver.state if isinstance(self.driver.state, dict) else {}
+            vehicle_state = self.vehicle.state if isinstance(self.vehicle.state, dict) else {}
+            origin_position = driver_state.get('pos', (0.0, 0.0, 0.0))
+            sound_position = vehicle_state.get('pos', (0.0, 0.0, 0.0))
+            return origin_position, sound_position
+
+        origin_position, sound_position = self.dispatcher.send_sync(_get_positions)
+
         dx = origin_position[0] - sound_position[0]
         dy = origin_position[1] - sound_position[1]
         dz = origin_position[2] - sound_position[2]
@@ -57,10 +65,11 @@ class VehicleSoundEvent:
     
     def write_event(self):
         position = self.position_data(relative=True)
-        self.fsm.write_soundevent_csv(self.track_index, position)       
+        self.fsm.write_soundevent_csv(self.class_index, self.track_index, position)
     
     def write_reset(self):
-        self.fsm.write_soundevent_csv(self.track_index, (0.0, 0.0, 0.0))
+        self.fsm.write_soundevent_csv(self.class_index, self.track_index, (0.0, 0.0, 0.0))
+    
     '''
     # Horns can't be triggered via BeamNGpy
     def random_honk_event(self):
