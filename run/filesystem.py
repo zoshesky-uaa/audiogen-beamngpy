@@ -27,9 +27,10 @@ class FSM:
 
         self.driver_buffer = DriverData()
         
-        self.driverqueue = queue.Queue(maxsize=1)
-        self.eventqueue = queue.Queue(maxsize=const.MAXIMUM_EMERGENCY_VEHICLES)
-        self.eventqueue_dump = []
+        self.driverqueue = queue.Queue(maxsize=2)
+        self.eventqueue = {}
+        for i in range(0, const.MAXIMUM_EMERGENCY_VEHICLES):
+            self.eventqueue[i] = queue.Queue(maxsize=2)
 
     # ---------- Queue for producer (vehicles) to the writer thread ---------- 
 
@@ -37,12 +38,11 @@ class FSM:
         if self.write_active:
             msg = EventObj(class_index, track_index, position)
             try:
-                self.eventqueue.put_nowait(msg)
+                self.eventqueue[track_index].put_nowait(msg)
             except queue.Full:
-                print("Event queue is full. Dropping data point.")
-                pass 
-            #if self.write_active:
-                #self.ev_event_buffer[track_index].set_position(position)
+                    _ = self.eventqueue[track_index].get_nowait()
+                    self.eventqueue[track_index].task_done()
+                    self.eventqueue[track_index].put_nowait(msg)
 
     # Collection of primitives about the driver for later use:
     # Poll: Damage, Steering, Braking, Velocity (x,y,z), Lane Distances (left line, center, right, halfwidth; remove the max to determine directionality)
@@ -52,10 +52,9 @@ class FSM:
             try:
                 self.driverqueue.put_nowait(msg)
             except queue.Full:
-                print("Driver queue is full. Dropping data point.")
-                pass 
-            #if self.write_active:
-                #self.driver_buffer.set_data(damage, steering, braking, velocity, lane_data)
+                _ = self.driverqueue.get_nowait()
+                self.driverqueue.task_done()
+                self.driverqueue.put_nowait(msg)          
     
     #  ---------- Writer thread functions  ---------- 
 
@@ -75,18 +74,8 @@ class FSM:
 
     def _csv_writer(self):
         self.tick.waited_action_iterate(self._csv_write, 0, None, (lambda: self.write_active))
-
-    def dump_eventqueue(self):
-        while not self.eventqueue.empty():
-            try:
-                data = self.eventqueue.get_nowait()
-                self.eventqueue.task_done()
-                self.eventqueue_dump.append(data)
-            except queue.Empty:
-                break
         
     def _csv_write(self):
-        sleep(const.TICK_DURATION_SECONDS/2)
         for (csvtype, csv) in self.trial_csvs.items():
                 try:
                     match csvtype:
@@ -107,14 +96,15 @@ class FSM:
                             self.csv_writers[csv].writerow([self.tick.frame_index, 
                                                             *self.driver_buffer.row()])
                         case _ if csvtype.startswith("soundevent_3_"):
-                            self.dump_eventqueue()
                             track_index = int(csvtype.split("_")[-1])
-                            idx, event_data = next(((i, e) for i, e in enumerate(self.eventqueue_dump) 
-                                                        if e.track_index == track_index),
-                                                            (None, None))
-                            if idx is not None:
+                            try:
+                                event_data = self.eventqueue[track_index].get_nowait()
+                                self.eventqueue[track_index].task_done()
+                            except queue.Empty:
+                                event_data = None
+
+                            if event_data is not None:
                                 self.ev_event_buffer[track_index].set_position(event_data.position)
-                                self.eventqueue_dump.pop(idx)
 
                             if csv not in self.open_files:
                                 self._open_csv_file(csv)

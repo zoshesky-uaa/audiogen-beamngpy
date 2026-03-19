@@ -1,8 +1,8 @@
 from dataclasses import dataclass, field
-from time import sleep
 from typing import Callable, Any, Optional
 import queue
 import concurrent.futures
+import traceback    
 
 # Dispatch class that serialize access to BeamNG API, most of their classes are thread-safe but this is a simple precaution.
 @dataclass
@@ -46,6 +46,9 @@ class Dispatcher:
                 msg = self.dispatchqueue.get(timeout=0.005)
                 try:
                     msg.run()
+                except Exception as e:
+                    print(f"Dispatcher task failed: {e}")
+                    traceback.print_exc()
                 finally:
                     self.dispatchqueue.task_done()
             except queue.Empty:
