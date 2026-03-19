@@ -12,7 +12,7 @@ class Simulation:
         self.beamng = BeamNGpy(
             host="localhost",        
             port=25252,           
-            home=r"E:\BeamNG.tech.v0.38.3.0"  
+            home=r"E:\BeamNG.tech.v0.38.3.0",
         )
         while True: 
             try:
@@ -21,7 +21,8 @@ class Simulation:
             except BNGDisconnectedError:  
                 print("Retrying connection...")  
                 sleep(5)
-        self.beamng.settings.set_nondeterministic() 
+        #self.beamng.settings.set_nondeterministic() 
+        self.beamng.settings.set_steps_per_second(120) 
         self.on = True
         self.dispatcher = dispatcher.Dispatcher(lambda: self.on)
         self.dispatcher_thread = threading.Thread(target=self.dispatcher.run, daemon=True)
@@ -46,13 +47,33 @@ class Simulation:
         self.dispatcher.send(self.beamng.settings.change, 'units_distance', 'mi')
         self.dispatcher.send(self.beamng.settings.apply_graphics)
 
+    def clean_scenario_startup(self, scenario_name, level_name):
+        try:  
+            # Stop current scenario if running  
+            if self.beamng._scenario:  
+                self.beamng.scenario.stop()  
+        except:  
+            pass  
+
+        try:  
+            scenarios = self.beamng.scenario.get_level_scenarios(level_name)  
+            for scenario in scenarios:  
+                if scenario.name == scenario_name:  
+                    scenario.delete(self.beamng)  
+                    print(f"Deleted existing scenario: {scenario_name}")  
+                    break  
+        except Exception as e:  
+            print(f"Failed to delete scenario {scenario_name}: {e}")  
+
     def scenario_setup(self, count, ai=True):
-        
         print("Starting scenario " + str(count) + "...")
         self.vehicle_controller = vehicles.builder(simulation=self)
-        self.scenario = Scenario(self.vehicle_controller.environment.name, ('Scenario ' + str(count)))
+        scenario_name = f'Scenario_{count}'  
+        level_name = self.vehicle_controller.environment.name
+        self.clean_scenario_startup(scenario_name, level_name)
+        self.scenario = Scenario(level_name, scenario_name) 
         self.event_schedular = scheduler.Scheduler(self) 
-
+        
         self.vehicle_controller.driver_presetup()
         self.event_schedular.append_event(0, ai=ai)
         #Send sync for blocking each step

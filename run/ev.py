@@ -1,6 +1,7 @@
 import math
 import random
 import const
+from time import sleep
 
 """
 SoundEvent class to represent audio events in the simulation
@@ -57,14 +58,15 @@ class VehicleSoundEvent:
 
     def random_siren_event(self):
         position = self.position_data()
-        if (position < 300):
+        if (position < 400):
             self.abnormal_behavior()
 
             # Random duration between 10-60 seconds with 100ms hops
             print(f"CE({self.class_index}), TE({self.track_index}): Starting siren event at frame {self.tick.frame_index}, at distance {position:.2f} m.")
             event_end_frame = self.tick.frame_index + math.floor(random.uniform(10*const.TICK_RATE, 60*const.TICK_RATE))
-
-            self.tick.waited_action_iterate(self.write_event, self.tick.frame_index, event_end_frame)
+            while (self.tick.frame_index < event_end_frame) and (not self.tick.shutdown.is_set()):
+                self.write_event()
+                sleep(const.TICK_DURATION_SECONDS/3)
 
     def random_empty(self):
         self.normal_behavior()
@@ -72,16 +74,21 @@ class VehicleSoundEvent:
         # Random duration between 5-30 seconds with 100ms hops
         print(f"CE({self.class_index}), TE({self.track_index}): Starting empty event at frame {self.tick.frame_index}.")
         event_end_frame = self.tick.frame_index + math.floor(random.uniform(5*const.TICK_RATE, 30*const.TICK_RATE))
-        
-        self.tick.waited_action_iterate(self.write_reset, self.tick.frame_index, event_end_frame)
+        while (self.tick.frame_index < event_end_frame) and (not self.tick.shutdown.is_set()):
+            self.write_reset()
+            sleep(const.TICK_DURATION_SECONDS/3)
 
     def position_data(self, relative=False):
-        # ---- Return values needed (send/sync)---- #
-        self.dispatcher.send_sync(self.driver.sensors.poll)
-        self.dispatcher.send_sync(self.vehicle.sensors.poll)
-
-        origin_position = self.driver.state['pos']
-        sound_position =  self.vehicle.state['pos']
+        def _snapshot_positions():
+            self.driver.sensors.poll()
+            self.vehicle.sensors.poll()
+            driver_state = self.driver.state if isinstance(self.driver.state, dict) else {}
+            vehicle_state = self.vehicle.state if isinstance(self.vehicle.state, dict) else {}
+            origin_position = driver_state.get('pos', (0.0, 0.0, 0.0))
+            sound_position = vehicle_state.get('pos', (0.0, 0.0, 0.0))
+            return origin_position, sound_position
+        
+        origin_position, sound_position = self.dispatcher.send_sync(_snapshot_positions)
 
         dx = origin_position[0] - sound_position[0]
         dy = origin_position[1] - sound_position[1]

@@ -40,7 +40,7 @@ class VehicleSoundEvent:
         self.dispatcher.send(self.vehicle.ai.set_mode, "traffic")
 
     def position_data(self, relative=False):
-        def _get_positions():
+        def _snapshot_positions():
             self.driver.sensors.poll()
             self.vehicle.sensors.poll()
             driver_state = self.driver.state if isinstance(self.driver.state, dict) else {}
@@ -48,8 +48,8 @@ class VehicleSoundEvent:
             origin_position = driver_state.get('pos', (0.0, 0.0, 0.0))
             sound_position = vehicle_state.get('pos', (0.0, 0.0, 0.0))
             return origin_position, sound_position
-
-        origin_position, sound_position = self.dispatcher.send_sync(_get_positions)
+        
+        origin_position, sound_position = self.dispatcher.send_sync(_snapshot_positions)
 
         dx = origin_position[0] - sound_position[0]
         dy = origin_position[1] - sound_position[1]

@@ -9,7 +9,7 @@ class AudioRec:
         self.channels = channels
         self.tick = tick
         self.fsm = fsm
-        self.device = sd.default.device[0]
+        self.device = self._resolve_input_device(self.channels)
         
         self.hop_length = int(self.samplerate / const.TICK_RATE) # Number of samples per tick
         self.fft_length = const.FFT_SIZE       
@@ -22,12 +22,41 @@ class AudioRec:
         self.buffer = np.zeros((self.channels, self.fft_length), dtype=np.float32)
         
         # Start continuous audio stream, reading exactly hop_length samples at a time
-        self.stream = sd.InputStream(samplerate=self.samplerate,
-                                     channels=self.channels,
-                                     blocksize=self.hop_length,
-                                     device=self.device,
-                                     callback=self._audio_callback)
-        self.stream.start()
+        try:
+            self.stream = sd.InputStream(samplerate=self.samplerate,
+                                         channels=self.channels,
+                                         blocksize=self.hop_length,
+                                         device=self.device,
+                                         callback=self._audio_callback)
+            self.stream.start()
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to start audio input stream (device={self.device}, channels={self.channels}, samplerate={self.samplerate}): {e}"
+            ) from e
+
+    def _resolve_input_device(self, required_channels):
+        """Pick an input device that supports the required channel count."""
+        default_in = sd.default.device[0]
+        devices = sd.query_devices()
+
+        # Prefer default input device when it is valid and capable.
+        if default_in is not None and default_in >= 0:
+            try:
+                info = sd.query_devices(default_in)
+                if int(info.get('max_input_channels', 0)) >= required_channels:
+                    return default_in
+            except Exception:
+                pass
+
+        # Fallback to first device that supports enough input channels.
+        for i, info in enumerate(devices):
+            if int(info.get('max_input_channels', 0)) >= required_channels:
+                return i
+
+        raise RuntimeError(
+            f"No input device found with >= {required_channels} channels. "
+            f"Available max input channels: {[int(d.get('max_input_channels', 0)) for d in devices]}"
+        )
 
     def _audio_callback(self, indata, hop_length, time, status):
         """Called every time hop_length samples are available."""
