@@ -12,7 +12,7 @@ class Simulation:
         self.beamng = BeamNGpy(
             host="localhost",        
             port=25252,           
-            home=r"E:\BeamNG.tech.v0.38.3.0",
+            home=const.BEAMNG_LOCATION,
         )
         while True: 
             try:

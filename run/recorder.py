@@ -9,6 +9,7 @@ class AudioRec:
         self.channels = channels
         self.tick = tick
         self.fsm = fsm
+        self.tick.external_clock = True
         self.device = self._resolve_input_device(self.channels)
         
         self.hop_length = int(self.samplerate / const.TICK_RATE) # Number of samples per tick
@@ -92,11 +93,13 @@ class AudioRec:
         combined_features = np.concatenate([amp_norm, phase_norm], axis=0)
         if const.TRAINING:
             # Store the combined features in the pre-allocated memmap array at the correct frame index
-            frame_index = self.tick.frame_index
-            if frame_index < const.TOTAL_FRAMES: 
-                self.fsm.features_storage[frame_index] = combined_features
-            else:
-                print(f"Warning: Frame index {frame_index} exceeds pre-allocated storage size.")
+            if self.tick.frame_index < const.TOTAL_FRAMES: 
+                self.fsm.features_storage[self.tick.frame_index] = combined_features
+            elif self.tick.frame_index == const.TOTAL_FRAMES:
+                print(f"Audio stream reached pre-allocated storage size ({const.TOTAL_FRAMES}). Further frames will be dropped.")
+            
+            # Use the precise audio hardware callback clock to drive the simulation tick
+            self.tick.advance_frame()
     
     def stop(self):
         self.stream.stop()
