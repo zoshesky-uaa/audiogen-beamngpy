@@ -1,6 +1,6 @@
 from beamngpy.sensors import Damage, RoadsSensor, Electrics
 import const
-from time import sleep
+from time import sleep, time
 
 class DriverRecorder:
     def __init__(self,
@@ -33,10 +33,9 @@ class DriverRecorder:
             "roads_sensor",
             self.simulation.beamng,
             self.driver,
-            is_send_immediately=True
+            
         )
 
-        # Keep running across warmup reset; wait_next handles on/off transitions.
         while (self.tick.frame_index < const.END_FRAME) and (not self.tick.shutdown.is_set()):
             self.driver_poll()
             sleep(const.TICK_DURATION_SECONDS/3)
@@ -44,32 +43,68 @@ class DriverRecorder:
     def normal_behavior(self):
         if self.simulation.current_time != "noon":
             self.dispatcher.send(self.driver.set_lights, headlights=1)
-        self.dispatcher.send(self.driver.ai.set_aggression, 0.2)
-        self.dispatcher.send(self.driver.ai.drive_in_lane, True)
-        self.dispatcher.send(self.driver.ai.set_speed, 15.65, mode="limit")
         self.dispatcher.send(self.driver.ai.set_mode, "traffic")
+        self.dispatcher.send(self.driver.ai.set_aggression, 0.1)
+        self.dispatcher.send(self.driver.ai.drive_in_lane, True)
+        #self.dispatcher.send(self.driver.ai.set_speed, 15.65, mode="limit")
 
     def driver_poll(self):
-        def _snapshot_driver_state():
-            self.driver.sensors.poll()
-            state = self.driver.state if isinstance(self.driver.state, dict) else {}
-            velocity = tuple(v * 2.237 for v in state.get('vel', (0.0, 0.0, 0.0)))
-            steering = self.electrics.get('steering', 0.0)
-            braking = self.electrics.get('brake', 0.0)
-            damage = self.damage.get('damage', 0.0)
-            road_data = self.roads_sensor.poll()
-            return velocity, steering, braking, damage, road_data
+        if not self.driver.is_connected():  
+            start_time = time()  
+            while not self.driver.is_connected():  
+                if time() - start_time > 5.0:  # 5 second timeout  
+                    print("Reconnection timeout")  
+                    return  
+                if self.tick.shutdown.is_set():  
+                    return  
+                try:  
+                    self.driver.connect(self.simulation.beamng)  
+                    break  
+                except Exception: 
+                    print("Reconnection attempt failed, retrying...") 
+                    sleep(0.1)  
+            
+        def _snapshot_driver_state(): 
+            try:  
+                failed = False
+                self.driver.sensors.poll()
 
-        velocity, steering, braking, damage, road_data = self.dispatcher.send_sync(_snapshot_driver_state)
-        if not isinstance(road_data, dict):  
-            # Sensor not ready yet - skip or use default values  
-            lane_center = lane_right = lane_left = lane_halfwidth = 0.0 
-            lane_data = (lane_center, lane_right, lane_left, lane_halfwidth) 
-        else:  
-            # Sensor ready - use dictionary format  
-            lane_center = road_data["dist2CL"] * 3.281  
-            lane_right = road_data["dist2Right"] * 3.281  
-            lane_left = road_data["dist2Left"] * 3.281  
-            lane_halfwidth = road_data["halfWidth"] * 3.281  
-            lane_data = (lane_center, lane_right, lane_left, lane_halfwidth) # Convert m to ft
-        self.fsm.write_driver_csv(velocity, steering, braking, lane_data, damage)
+                state = self.driver.state if isinstance(self.driver.state, dict) else {}  
+                raw_velocity = state.get('vel', (0.0, 0.0, 0.0))  
+                velocity = tuple(v * 2.237 for v in raw_velocity)
+                
+                steering = self.electrics.get('steering', 0.0)  
+                braking = self.electrics.get('brake', 0.0)  
+                damage = self.damage.get('damage', 0.0)  
+
+                road_data = self.roads_sensor.poll()  
+              
+                if isinstance(road_data, dict) and road_data:
+                    latest_time = max(road_data.keys())  
+                    latest_reading = road_data[latest_time]  
+                    lane_center = latest_reading["dist2CL"] * 3.281  
+                    lane_right = latest_reading["dist2Right"] * 3.281    
+                    lane_left = latest_reading["dist2Left"] * 3.281  
+                    lane_halfwidth = latest_reading["halfWidth"] * 3.281  
+                    lane_data = (lane_center, lane_right, lane_left, lane_halfwidth)  
+                else:  
+                    lane_data = (0.0, 0.0, 0.0, 0.0)
+                    failed = True  
+            except BaseException as e:  
+                if 'velocity' not in locals():
+                    velocity = (0.0, 0.0, 0.0)
+                if 'steering' not in locals():
+                    steering = 0.0
+                if 'braking' not in locals():
+                    braking = 0.0
+                if 'damage' not in locals():
+                    damage = 0.0
+                if 'lane_data' not in locals():
+                    lane_data = (0.0, 0.0, 0.0, 0.0)
+                failed = True
+
+            return velocity, steering, braking, damage, lane_data, failed
+
+        velocity, steering, braking, damage, lane_data, failed = self.dispatcher.send_sync(_snapshot_driver_state)
+        if not failed:
+            self.fsm.write_driver_csv(damage, steering, braking, velocity, lane_data)

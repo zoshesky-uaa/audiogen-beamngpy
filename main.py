@@ -17,10 +17,11 @@ def main():
     except KeyboardInterrupt:
         print("\nInterrupted — shutting down...")
         simulation.scenario_cleanup()
-        simulation.close()
+        exit(0)
     finally:
         print("Simulation ended.")
         simulation.close()
+        exit(0)
 
 
 if __name__ == "__main__":

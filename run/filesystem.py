@@ -1,6 +1,5 @@
 from pathlib import Path
 import csv
-from time import sleep
 import threading
 import numpy as np
 import const
@@ -16,9 +15,16 @@ class FSM:
                 self.trial_path / 'training_features.npy', 
                 dtype='float32', 
                 mode='w+', 
-                shape=(const.TOTAL_FRAMES, const.N_INPUTS, const.N_BINS)
+                shape=(const.TOTAL_FRAMES+1, const.N_INPUTS, const.N_BINS)
             )
         
+        self.EV_labels_storage = np.memmap(
+                self.trial_path / 'training_labels.npy',
+                dtype='float16',
+                mode='w+',
+                shape=(const.TOTAL_FRAMES, (const.MAXIMUM_EMERGENCY_VEHICLES), [0.0, 0.0, 0.0])
+            )
+               
         self.ev_event_buffer = []
 
         # Buffer all poossible emergency vehicle events
@@ -46,7 +52,7 @@ class FSM:
 
     # Collection of primitives about the driver for later use:
     # Poll: Damage, Steering, Braking, Velocity (x,y,z), Lane Distances (left line, center, right, halfwidth; remove the max to determine directionality)
-    def write_driver_csv(self, velocity, steering, braking, lane_data, damage):
+    def write_driver_csv(self, damage, steering, braking, velocity, lane_data):
         if self.write_active:
             msg = DriverData(damage, steering, braking, velocity, lane_data)
             try:
@@ -73,49 +79,41 @@ class FSM:
             self._close_open_csv_handles()
 
     def _csv_writer(self):
-        self.tick.waited_action_iterate(self._csv_write, 0, None, (lambda: self.write_active))
+        self.tick.waited_action_iterate(self._csv_write, None, (lambda: self.write_active))
         
     def _csv_write(self):
-        for (csvtype, csv) in self.trial_csvs.items():
-                try:
-                    match csvtype:
-                        case "driver":
-                            try:
-                                driver_data = self.driverqueue.get_nowait()
-                            except queue.Empty:
-                                driver_data = None
-                            if driver_data is not None:
-                                self.driver_buffer.set_data(driver_data.damage,
-                                                            driver_data.steering,
-                                                            driver_data.braking,
-                                                            driver_data.velocity,
-                                                            driver_data.lane_data)
-                                self.driverqueue.task_done()
-                            if csv not in self.open_files:
-                                self._open_csv_file(csv)
-                            self.csv_writers[csv].writerow([self.tick.frame_index, 
-                                                            *self.driver_buffer.row()])
-                        case _ if csvtype.startswith("soundevent_3_"):
-                            track_index = int(csvtype.split("_")[-1])
-                            try:
-                                event_data = self.eventqueue[track_index].get_nowait()
-                                self.eventqueue[track_index].task_done()
-                            except queue.Empty:
-                                event_data = None
+        # Driver data
+        try:
+            driver_data = self.driverqueue.get_nowait()
+        except queue.Empty:
+            driver_data = None
+        if driver_data is not None:
+            self.driver_buffer.set_data(driver_data.damage,
+                                        driver_data.steering,
+                                        driver_data.braking,
+                                        driver_data.velocity,
+                                        driver_data.lane_data)
+            self.driverqueue.task_done()
+        if csv not in self.open_files:
+            self._open_csv_file(csv)
+        self.csv_writers[csv].writerow([self.tick.frame_index, 
+                                        *self.driver_buffer.row()])
+        
+        # Sound event data, current only EV vehicles
+        for track_index in range(0, const.MAXIMUM_EMERGENCY_VEHICLES):
+            try:      
+                event_data = self.eventqueue[track_index].get_nowait()
+                self.eventqueue[track_index].task_done()
 
-                            if event_data is not None:
-                                self.ev_event_buffer[track_index].set_position(event_data.position)
+            except queue.Empty:
+                event_data = None
 
-                            if csv not in self.open_files:
-                                self._open_csv_file(csv)
-                            self.csv_writers[csv].writerow([self.tick.frame_index,
-                                                            *self.ev_event_buffer[track_index].row()])
-                        case _: 
-                            print(f"Unknown CSV type: {csvtype}") 
-                            return
-                except Exception as e:
-                    print(f"Failed to write to CSV file: {e}") 
+            if event_data is not None:
+                self.ev_event_buffer[track_index].set_position(event_data.position)
             
+            self.EV_labels_storage[self.tick.frame_index, track_index] = self.ev_event_buffer[track_index].position
+
+
     def _open_csv_file(self, csv_path):
         try:
             csv_path.parent.mkdir(parents=True, exist_ok=True)
@@ -157,9 +155,6 @@ class FSM:
         self.trial_csvs = {
             "driver": tracking_path / f"driver.csv"
         }
-
-        for track in range(0,const.MAXIMUM_EMERGENCY_VEHICLES):
-            self.trial_csvs[f"soundevent_3_{track}"] = new_trial_path / f"soundevent_3_{track}.csv"
 
         self.open_files = {}
         self.csv_writers = {}

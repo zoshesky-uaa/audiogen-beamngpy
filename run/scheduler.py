@@ -10,13 +10,21 @@ class Tick:
         self.shutdown = threading.Event()
         self.delay = delay
         self.on = False
+        #Hijacks the external clock of the audio callback to do frame time writes.
+        self.external_clock = False
     
     def start(self, endframe):
         with self._cond:
             self.on = True
             self._cond.notify_all()
-        while (self.frame_index < endframe) and (not self.shutdown.is_set()) and self.on:
-            self.iterate()
+
+        endframe = int(endframe)
+        if self.external_clock:
+            with self._cond:
+                self._cond.wait_for(lambda: self.frame_index > endframe or self.shutdown.is_set() or not self.on)
+        else:
+            while (self.frame_index < endframe) and (not self.shutdown.is_set()) and self.on:
+                self.iterate()
 
     def stop(self):
         self.shutdown.set()
@@ -33,9 +41,15 @@ class Tick:
         with self._cond:
             if not self.on:
                 return
+        sleep(self.delay)
+        self.advance_frame()
+
+    def advance_frame(self):
+        with self._cond:
+            if not self.on:
+                return
             self.frame_index += 1
             self._cond.notify_all()
-        sleep(self.delay)
 
     def wait_next(self, last_frame):
         with self._cond:
@@ -46,24 +60,24 @@ class Tick:
                 return None
             return self.frame_index
 
-    def waited_action(self, action=None, last_frame=0):
+    def waited_action(self, action=None):
         if action:
             action()
-        frame = self.wait_next(last_frame)
+        frame = self.wait_next(self.frame_index)
         return frame
 
-    def waited_action_iterate(self, action=None, last_frame=0, max_frame=None, cond_func = None):
+    def waited_action_iterate(self, action=None, max_frame=None, cond_func = None):
         while not self.shutdown.is_set():
-            if max_frame is not None and last_frame >= max_frame:
+            if max_frame is not None and self.frame_index >= max_frame:
                 break
             if cond_func is not None and not cond_func():
                 break
             if action:
                 action()
-            frame = self.wait_next(last_frame)
+            frame = self.wait_next(self.frame_index)
             if frame is None:
                 break
-            last_frame = frame
+
 
 class Scheduler:
     def __init__(self, simulation):
@@ -127,7 +141,7 @@ class Scheduler:
         self.tick.stop()
         audio_data.stop()
         self.fsm.shutdown()
-
+        print("Scenario ended")
         self.simulation.dispatcher.send(self.simulation.beamng.control.pause)
 
     def stop_all(self):

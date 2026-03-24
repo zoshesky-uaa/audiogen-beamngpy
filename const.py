@@ -9,7 +9,11 @@ TICK_RATE = SAMPLING_FREQUENCY/(FFT_SIZE/2)
 TICK_DURATION_SECONDS = 1.0 / TICK_RATE
 END_FRAME = SIMULATION_DURATION_SECONDS * (TICK_RATE)
 TOTAL_FRAMES = int(SIMULATION_DURATION_SECONDS * TICK_RATE)
-MINIMUM_TRAFFIC_VEHICLES = 5
-MAXIMUM_TRAFFIC_VEHICLES = 10
+MINIMUM_TRAFFIC_VEHICLES = 0
+MAXIMUM_TRAFFIC_VEHICLES = 0
 MINIMUM_EMERGENCY_VEHICLES = 0
-MAXIMUM_EMERGENCY_VEHICLES = 5 #Maximuum of configured model is 5 track events currently
+#Maximuum of configured model is 5 track events currently
+MAXIMUM_EMERGENCY_VEHICLES = 5 
+# Path to BeamNG.tech installation directory. Update this path to match your local setup.
+BEAMNG_LOCATION = r"C:\Users\zoshesky\Desktop\BeamNG.tech.v0.38.3.0"
+
