@@ -1,19 +1,34 @@
+# Configuration constants for the simulation
+
+# Path to BeamNG.tech installation directory. Update this path to match your local setup.
+BEAMNG_LOCATION = r"E:\BeamNG.tech.v0.38.3.0"
+
+# Defines whether the simulation is in training mode (AI-controlled) or not (human-controlled)
 TRAINING = True
+
+# Audio configuration, FFT parameters
 BIT_DEPTH = 16
 SIMULATION_DURATION_SECONDS = 300
 SAMPLING_FREQUENCY = 16000
 FFT_SIZE = 1024
 N_INPUTS = 7
 N_BINS = (FFT_SIZE // 2) + 1
+AUDIO_INPUT_DEVICE_NAME = "Voicemeeter Out B1"
+
+# Schedular configuration
 TICK_RATE = SAMPLING_FREQUENCY/(FFT_SIZE/2)
 TICK_DURATION_SECONDS = 1.0 / TICK_RATE
 END_FRAME = SIMULATION_DURATION_SECONDS * (TICK_RATE)
+
+# Data storage configuration
+CHUNK_SIZE = 512
 TOTAL_FRAMES = int(SIMULATION_DURATION_SECONDS * TICK_RATE)
+
+# Simulation configuration
 MINIMUM_TRAFFIC_VEHICLES = 0
 MAXIMUM_TRAFFIC_VEHICLES = 0
 MINIMUM_EMERGENCY_VEHICLES = 0
-#Maximuum of configured model is 5 track events currently
 MAXIMUM_EMERGENCY_VEHICLES = 5 
-# Path to BeamNG.tech installation directory. Update this path to match your local setup.
-BEAMNG_LOCATION = r"C:\Users\zoshesky\Desktop\BeamNG.tech.v0.38.3.0"
+
+
 
