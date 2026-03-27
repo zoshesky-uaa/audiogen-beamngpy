@@ -20,70 +20,78 @@ class VehicleSoundEvent:
                  fsm,
                  vehicle, 
                  tick):
-        
         self.class_index = class_index
         self.track_index = track_index
+        self.tick = tick
+        self.fsm = fsm
+        # Catch for empty vehicles to let them send empty resets
+        if vehicle is None:
+            self.empty_action()
+
         self.dispatcher = dispatcher
         self.driver = driver
-        self.fsm = fsm
         self.vehicle = vehicle
-        self.tick = tick
         self.run()
  
+    def empty_action(self):
+        self.tick.waited_action_iterate(self.write_reset)
 
     def run(self):
+        # Sets the license plate, did this as as a check before but this is purely cosmetic
         self.dispatcher.send(self.vehicle.set_license_plate, "EV")
+        # Delays until warmup is started
         self.tick.waited_action(self.normal_behavior)
-        self.tick.waited_action_iterate(random.choices([self.random_empty, self.random_siren_event],
-                                    weights=[0.80, 0.20], k=1)[0])
+        # Lambda to select either an empty event or sirent event, passed to waited_action_iterate
+        action = lambda: random.choices([self.random_empty, self.random_siren_event],
+                                    weights=[0.80, 0.20], k=1)[0]()
+        self.tick.waited_action_iterate(action)
 
     def normal_behavior(self):
+        # Sets some "normal" conditions for the vehicle
+        # Lightbar condition is what controls the siren state, 0 is off, 1 is on but not audible, 2 is on and audible.
         self.dispatcher.send(self.vehicle.set_lights, lightbar=0)
         self.dispatcher.send(self.vehicle.ai.set_mode, "traffic")
         self.dispatcher.send(self.vehicle.ai.set_aggression, 0.1)
         self.dispatcher.send(self.vehicle.ai.drive_in_lane, True)
         #self.dispatcher.send(self.vehicle.ai.set_speed, 15.65, mode="limit")
 
-
-    def abnormal_behavior(self, end_frame):
-        self.dispatcher.send(self.vehicle.set_lights, lightbar=2)
-        behaviors = [  
-            lambda: self.follow(end_frame),  
-            lambda: (
-                self.dispatcher.send(self.vehicle.ai.set_mode, "random"),  
-                self.dispatcher.send(self.vehicle.ai.set_aggression, 0.1),
-                self.dispatcher.send(self.vehicle.ai.drive_in_lane, True)        
-            )
-        ]  
-        behavior = random.choices(behaviors, weights=[0.5, 0.5], k=1)[0]  
-        behavior()
-        #self.dispatcher.send(self.vehicle.ai.set_speed, 45, mode="limit")
-
-    def light_follow(self, end_frame):
-        self.dispatcher.send(self.vehicle.set_lights, lightbar=0)
-        self.follow(end_frame)
-        #self.dispatcher.send(self.vehicle.ai.set_speed, 45, mode="limit")
-
     def random_siren_event(self):
         position, failed = self.position_data()
         if failed:
             print(f"CE({self.class_index}), TE({self.track_index}): Failed to get position data for siren event.")
             return
+        
         # Random duration between 10-60 seconds with 100ms hops
         event_end_frame = self.tick.frame_index + math.floor(random.uniform(10*const.TICK_RATE, 60*const.TICK_RATE))
-
+        
+        # When the vehicle is within an audible range (not defined exactly) it'll trigger a siren event
+        # Otherwise, it writes a reset and simply heads towards the player so its closer for the next event
+        action = None
         if (position < 400):
-            self.abnormal_behavior(event_end_frame)
             print(f"CE({self.class_index}), TE({self.track_index}): Starting siren event at frame {self.tick.frame_index}, at distance {position:.2f} m.")
-            while (self.tick.frame_index < event_end_frame) and (not self.tick.shutdown.is_set()):
-                self.write_event()
-                sleep(const.TICK_DURATION_SECONDS/3)
+            #Setup random siren behavior here
+            self.dispatcher.send(self.vehicle.set_lights, lightbar=2)
+            behaviors = [  
+                lambda: self.follow(event_end_frame),  
+                lambda: (
+                    self.dispatcher.send(self.vehicle.ai.set_mode, "random"),  
+                    self.dispatcher.send(self.vehicle.ai.set_aggression, 0.1),
+                    self.dispatcher.send(self.vehicle.ai.drive_in_lane, True)        
+                )
+            ]
+            behavior = random.choices(behaviors, weights=[0.5, 0.5], k=1)[0]    
+            behavior()
+            action = lambda: self.write_event()
         else:
-            self.light_follow(event_end_frame)
             print(f"CE({self.class_index}), TE({self.track_index}): Starting light follow at frame {self.tick.frame_index}, at distance {position:.2f} m.")
-            while (self.tick.frame_index < event_end_frame) and (not self.tick.shutdown.is_set()):
-                self.write_reset()
-                sleep(const.TICK_DURATION_SECONDS/3)
+            self.dispatcher.send(self.vehicle.set_lights, lightbar=0)
+            self.follow(event_end_frame)
+            self.write_reset()
+
+        while self.tick.frame_index < event_end_frame and not self.tick.shutdown.is_set():
+            if action is not None:
+                action()
+            sleep(const.TICK_DURATION_SECONDS/2)
 
     def random_empty(self):
         self.normal_behavior()
@@ -91,9 +99,8 @@ class VehicleSoundEvent:
         # Random duration between 5-30 seconds with 100ms hops
         print(f"CE({self.class_index}), TE({self.track_index}): Starting empty event at frame {self.tick.frame_index}.")
         event_end_frame = self.tick.frame_index + math.floor(random.uniform(5*const.TICK_RATE, 30*const.TICK_RATE))
-        while (self.tick.frame_index < event_end_frame) and (not self.tick.shutdown.is_set()):
-            self.write_reset()
-            sleep(const.TICK_DURATION_SECONDS/3)
+        self.write_reset()
+        self.tick.waited_action_iterate(max_frame=event_end_frame)
 
     def position_data(self, relative=False):
         if not self.vehicle.is_connected():  
@@ -127,15 +134,14 @@ class VehicleSoundEvent:
             dy = origin_position[1] - sound_position[1]
             dz = origin_position[2] - sound_position[2]
             magnitude = math.sqrt(dx**2 + dy**2 + dz**2)
+            if relative and magnitude > 0.0:
+                return ((dx / magnitude, dy / magnitude, dz / magnitude), failed)
+            elif relative:
+                return ((0.0, 0.0, 0.0), failed)
+            else:
+                return (magnitude, failed)
         else:
-            magnitude = (0.0, 0.0, 0.0) if relative else 0.0
-
-        if (magnitude > 0.0) and relative:
-            return ((dx / magnitude, dy / magnitude, dz / magnitude), failed)
-        elif relative:
-            return (0.0, 0.0, 0.0), failed
-        else:
-            return (magnitude), failed
+            return ((0.0, 0.0, 0.0) if relative else 0.0, failed)
 
 
     def follow(self , end_frame):
@@ -185,7 +191,7 @@ class VehicleSoundEvent:
     def write_event(self):
         position, failed = self.position_data(relative=True)
         if not failed:
-            self.fsm.write_soundevent_csv(self.class_index, self.track_index, position)       
+            self.fsm.queue_soundevent_data(self.class_index, self.track_index, position)       
     
     def write_reset(self):
-        self.fsm.write_soundevent_csv(self.class_index, self.track_index, (0.0, 0.0, 0.0))
+        self.fsm.queue_soundevent_data(self.class_index, self.track_index, (0.0, 0.0, 0.0))

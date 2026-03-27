@@ -18,12 +18,16 @@ class DriverRecorder:
         self.run(ai=ai)
 
     def run(self, ai=True):
+        # Delays until warmup is started
         self.tick.waited_action()
-        #Write a else case for this for manual control in the future
+        # Forces simulation to switch current camera (including the audio listener) back to the driver, sort of a hack
         self.dispatcher.send_sync(self.simulation.vehicle_controller.switch_to_driver)
+        #Write a else case for this for manual control parameters in the future
         if ai:
             self.normal_behavior()
         print("Driver connected.") 
+        
+        # Attaches additional sensors to the driver vehicle for data collection per request
         self.electrics = Electrics()
         self.dispatcher.send_sync(self.driver.sensors.attach, "electrics", self.electrics)
         self.damage = Damage()
@@ -33,14 +37,14 @@ class DriverRecorder:
             "roads_sensor",
             self.simulation.beamng,
             self.driver,
-            
         )
-
-        while (self.tick.frame_index < const.END_FRAME) and (not self.tick.shutdown.is_set()):
+        # Starts loop to poll driver sensors every tick
+        while self.tick.shutdown.is_set():
             self.driver_poll()
-            sleep(const.TICK_DURATION_SECONDS/3)
+            sleep(const.TICK_DURATION_SECONDS/2) 
     
     def normal_behavior(self):
+        # Sets some "normal" conditions for the vehicle
         if self.simulation.current_time != "noon":
             self.dispatcher.send(self.driver.set_lights, headlights=1)
         self.dispatcher.send(self.driver.ai.set_mode, "traffic")
@@ -107,4 +111,5 @@ class DriverRecorder:
 
         velocity, steering, braking, damage, lane_data, failed = self.dispatcher.send_sync(_snapshot_driver_state)
         if not failed:
-            self.fsm.write_driver_csv(damage, steering, braking, velocity, lane_data)
+            # Do something here
+            pass

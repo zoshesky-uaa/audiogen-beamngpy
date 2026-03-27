@@ -1,5 +1,5 @@
 from pathlib import Path
-import csv
+import zarr
 import threading
 import numpy as np
 import const
@@ -9,135 +9,28 @@ class FSM:
     def __init__(self, tick):
         self.write_active = False
         self.tick = tick
-        self.trial_path, self.tracking_path = self.path_mkdir()
-
-        self.features_storage = np.memmap(
-                self.trial_path / 'training_features.npy', 
-                dtype='float32', 
-                mode='w+', 
-                shape=(const.TOTAL_FRAMES+1, const.N_INPUTS, const.N_BINS)
-            )
+        # Sets up the directory and Zarr files for training data
+        self.training_root, self.label_set, self.feature_set = self.create_trial_data()
+        self.ev_event_buffer = [EventObj(3,i, (0.0, 0.0, 0.0)) for i in range(const.MAXIMUM_EMERGENCY_VEHICLES)]
         
-        self.EV_labels_storage = np.memmap(
-                self.trial_path / 'training_labels.npy',
-                dtype='float16',
-                mode='w+',
-                shape=(const.TOTAL_FRAMES, (const.MAXIMUM_EMERGENCY_VEHICLES), [0.0, 0.0, 0.0])
-            )
-               
-        self.ev_event_buffer = []
+        # Queues for communication between audio and vehicle threads
+        self.labelqueue = {queue_index: queue.Queue(maxsize=2) for queue_index in range(const.MAXIMUM_EMERGENCY_VEHICLES)}
+        self.featurequeue = queue.Queue(maxsize=2)
 
-        # Buffer all poossible emergency vehicle events
-        for i in range (0, const.MAXIMUM_EMERGENCY_VEHICLES):
-            self.ev_event_buffer.append(EventObj(3,i, (0.0, 0.0, 0.0)))
+        # Writer thread object that flushes the above buffers every chunk
+        self.writer = ZarrWriter(self.feature_set, 
+                                 self.label_set, 
+                                 self.tick, 
+                                 self.labelqueue, 
+                                 self.featurequeue)
+     
 
-        self.driver_buffer = DriverData()
-        
-        self.driverqueue = queue.Queue(maxsize=2)
-        self.eventqueue = {}
-        for i in range(0, const.MAXIMUM_EMERGENCY_VEHICLES):
-            self.eventqueue[i] = queue.Queue(maxsize=2)
-
-    # ---------- Queue for producer (vehicles) to the writer thread ---------- 
-
-    def write_soundevent_csv(self, class_index,track_index, position):
-        if self.write_active:
-            msg = EventObj(class_index, track_index, position)
-            try:
-                self.eventqueue[track_index].put_nowait(msg)
-            except queue.Full:
-                    _ = self.eventqueue[track_index].get_nowait()
-                    self.eventqueue[track_index].task_done()
-                    self.eventqueue[track_index].put_nowait(msg)
-
-    # Collection of primitives about the driver for later use:
-    # Poll: Damage, Steering, Braking, Velocity (x,y,z), Lane Distances (left line, center, right, halfwidth; remove the max to determine directionality)
-    def write_driver_csv(self, damage, steering, braking, velocity, lane_data):
-        if self.write_active:
-            msg = DriverData(damage, steering, braking, velocity, lane_data)
-            try:
-                self.driverqueue.put_nowait(msg)
-            except queue.Full:
-                _ = self.driverqueue.get_nowait()
-                self.driverqueue.task_done()
-                self.driverqueue.put_nowait(msg)          
-    
-    #  ---------- Writer thread functions  ---------- 
-
-    def startup(self):
-        self.write_active = True
-        self._csv_writer_thread = threading.Thread(target=self._csv_writer, name="fsm-csv-writer", daemon=True)
-        self._csv_writer_thread.start()
-
-    def shutdown(self):
-        self.write_active = False
-        try:
-            self._csv_writer_thread.join(timeout=10.0)
-        except Exception as e:
-            print(f"Error occurred while shutting down CSV writer: {e}")
-        finally:
-            self._close_open_csv_handles()
-
-    def _csv_writer(self):
-        self.tick.waited_action_iterate(self._csv_write, None, (lambda: self.write_active))
-        
-    def _csv_write(self):
-        # Driver data
-        try:
-            driver_data = self.driverqueue.get_nowait()
-        except queue.Empty:
-            driver_data = None
-        if driver_data is not None:
-            self.driver_buffer.set_data(driver_data.damage,
-                                        driver_data.steering,
-                                        driver_data.braking,
-                                        driver_data.velocity,
-                                        driver_data.lane_data)
-            self.driverqueue.task_done()
-        if csv not in self.open_files:
-            self._open_csv_file(csv)
-        self.csv_writers[csv].writerow([self.tick.frame_index, 
-                                        *self.driver_buffer.row()])
-        
-        # Sound event data, current only EV vehicles
-        for track_index in range(0, const.MAXIMUM_EMERGENCY_VEHICLES):
-            try:      
-                event_data = self.eventqueue[track_index].get_nowait()
-                self.eventqueue[track_index].task_done()
-
-            except queue.Empty:
-                event_data = None
-
-            if event_data is not None:
-                self.ev_event_buffer[track_index].set_position(event_data.position)
-            
-            self.EV_labels_storage[self.tick.frame_index, track_index] = self.ev_event_buffer[track_index].position
-
-
-    def _open_csv_file(self, csv_path):
-        try:
-            csv_path.parent.mkdir(parents=True, exist_ok=True)
-            f = open(csv_path, "a", newline="")
-            self.open_files[csv_path] = f
-            self.csv_writers[csv_path] = csv.writer(f)
-        except Exception as e:
-            print(f"Failed to open CSV file {csv_path}: {e}")
- 
-    def _close_open_csv_handles(self):
-        for path_key, f in self.open_files.items():
-            try:
-                f.flush()
-                f.close()
-            except Exception as e:
-                print(f"Failed to close CSV file {path_key}: {e}")
-        self.open_files.clear()
-        self.csv_writers.clear()
-
-    def path_mkdir(self):
+    def create_trial_data(self):
         base_path = Path('trials').resolve()
         base_path.mkdir(parents=True, exist_ok=True)
+        
+        # Iterative trial folders for each run
         highest_num = 0
-        # Search for existing trial directories to find the highest number
         for child in base_path.iterdir():
             if child.is_dir() and child.name.startswith("trial_"):
                 try:
@@ -149,31 +42,139 @@ class FSM:
         new_trial_path = base_path / next_trial_name
         new_trial_path.mkdir()
 
-        tracking_path = new_trial_path / "tracking"
-        tracking_path.mkdir(parents=True, exist_ok=True)
+        # Create Zarr arrays for training data with Blosc compression
+        compressor = zarr.codecs.BloscCodec(cname='zstd', clevel=3, shuffle=zarr.codecs.BloscShuffle.shuffle)
+        training_root = zarr.group(new_trial_path / "training_data.zarr")
+        label_set = training_root.create_array(
+            name="labels",
+            shape=(const.TOTAL_FRAMES+1, (const.MAXIMUM_EMERGENCY_VEHICLES), 3),
+            dtype="f4",
+            chunks=(const.CHUNK_SIZE, const.MAXIMUM_EMERGENCY_VEHICLES, 3),
+            compressors=compressor
+        )
+
+        feature_set = training_root.create_array(
+            name="features",
+            shape=(const.TOTAL_FRAMES+1, const.N_INPUTS, const.N_BINS),
+            dtype="f4",
+            chunks=(const.CHUNK_SIZE, const.N_INPUTS, const.N_BINS),
+            compressors=compressor
+        )
+
+        # Driver data will be dealt with later, but this is roughly how'd you do it
+        # driver_root = zarr.group(self.trial_path / "driver_data.zarr")
+        # driver_set = driver_root.create_array(
+        #     name="driver",
+        #     shape=(const.TOTAL_FRAMES+1, 10),
+        #     dtype="f4",
+        #     chunks=(const.CHUNK_SIZE, 10),
+        #     compressor=compressor
+        # )
+        return training_root, label_set, feature_set
+    
+    # ---------- Queue for FSM to read from ---------- 
+
+    def queue_soundevent_data(self, class_index,track_index, position):
+        if self.write_active:
+            msg = EventObj(class_index, track_index, position)
+            try:
+                self.eventqueue[track_index].put_nowait(msg)
+            except queue.Full:
+                    _ = self.eventqueue[track_index].get_nowait()
+                    self.eventqueue[track_index].task_done()
+                    self.eventqueue[track_index].put_nowait(msg)
+
+    def queue_feature_data(self, features):
+        if self.write_active:
+            try:
+                self.featurequeue.put_nowait(features)
+            except queue.Full:
+                _ = self.featurequeue.get_nowait()
+                self.featurequeue.task_done()
+                self.featurequeue.put_nowait(features)
+
+    # Collection of primitives, do processing here instead in future
+    # Poll: Damage, Steering, Braking, Velocity (x,y,z), Lane Distances (left line, center, right, halfwidth; remove the max to determine directionality)
+    # def queue_driver_data(self, damage, steering, braking, velocity, lane_data):
+    #     if self.write_active:
+    #         msg = DriverData(damage, steering, braking, velocity, lane_data)
+    #         try:
+    #             self.driverqueue.put_nowait(msg)
+    #         except queue.Full:
+    #             _ = self.driverqueue.get_nowait()
+    #             self.driverqueue.task_done()
+    #             self.driverqueue.put_nowait(msg)          
+    
+    #  ---------- Writing functions  ---------- 
+    # These functions read their relative queues (similar to rust spsc) to have lock-free updates
+
+
+    def write_driver_data(self):
+        try:
+            msg = self.driverqueue.get_nowait()
+            self.driverqueue.task_done()
+        except queue.Empty:
+            msg = None
+        if msg is not None:
+            self.driver_buffer = msg
+        #self.driver_set[self.tick.frame_index, :] = self.driver_buffer.row()
+
+class ZarrWriter(threading.Thread):
+    def __init__(self, feature_set, label_set, tick, labelqueue, featurequeue):
+        super().__init__(daemon=True)
+        self.tick = tick
+        self.feature_set = feature_set
+        self.label_set = label_set
+        self.labelqueue = labelqueue
+        self.featurequeue = featurequeue
+        self.feature_buffer = np.zeros((const.CHUNK_SIZE, const.N_INPUTS, const.N_BINS), dtype="f4")
+        self.label_buffer = np.zeros((const.CHUNK_SIZE, const.MAXIMUM_EMERGENCY_VEHICLES, 3), dtype="f4")
+        self.next_flush_frame = const.CHUNK_SIZE
+
+    def run(self):
+        print("ZarrWriter thread started.")
+        while not (self.tick.shutdown.is_set()):
+            current_frame = self.tick.frame_index
+            # Note: Maybe add the frame_index to events themselves so we know when they were sent to the queue
+            # Gets latest event data from queues for each track and updates label buffer
+            for track_index in range(0, const.MAXIMUM_EMERGENCY_VEHICLES):
+                try:
+                    msg = self.labelqueue[track_index].get_nowait()
+                    self.labelqueue[track_index].task_done()
+                    self.label_buffer[self.tick.frame_index, track_index, :] = msg.row()
+                except queue.Empty:
+                    pass
+                         
+            # Gets latest feature data from queue and updates feature buffer
+            try:                
+                features = self.featurequeue.get_nowait()
+                self.featurequeue.task_done()
+                self.feature_buffer[self.tick.frame_index, :, :] = features
+            except queue.Empty:                
+                pass      
+
+            if current_frame >= self.next_flush_frame:
+                start_idx = self.next_flush_frame - const.CHUNK_SIZE
+                end_idx = self.next_flush_frame
+                
+                self._flush_chunk(start_idx, end_idx)
+                
+                # Update the target for the next chunk
+                self.next_flush_frame += const.CHUNK_SIZE
         
-        self.trial_csvs = {
-            "driver": tracking_path / f"driver.csv"
-        }
-
-        self.open_files = {}
-        self.csv_writers = {}
-        return new_trial_path, tracking_path    
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        try:
-            self.shutdown()
-        except Exception:
-            pass
-
-    def __del__(self):
-        try:
-            self.shutdown()
-        except Exception:
-            pass
+        remainder = (self.tick.frame_index % const.CHUNK_SIZE)
+        if remainder != 0:
+                    start_idx = current_frame - remainder
+                    self._flush_chunk(start_idx, current_frame + 1)
+                    print("Final partial chunk flushed.")
+    
+    def _flush_chunk(self, start, end):
+        self.label_set[start:end] = self.label_buffer[start:end]
+        self.feature_set[start:end] = self.feature_buffer[start:end]
+        
+        print(f"Flushed chunk to Zarr: frames {start} to {end-1}")
+        self.label_buffer.fill(0)
+        self.feature_buffer.fill(0)
 
 class EventObj:
     def __init__(self, class_index, track_index, position):
@@ -186,36 +187,6 @@ class EventObj:
 
     def set_position(self, position):
         self.position = position
-    
+
     def row(self):
-        return [self.class_index, self.track_index, *self.position]
-
-class DriverData:
-    def __init__(self, 
-                 damage=0.0, 
-                 steering=0.0, 
-                 braking=0.0, 
-                 velocity=(0.0, 0.0, 0.0), 
-                 lane_data=(0.0, 0.0, 0.0, 0.0)):
-        self.damage = damage
-        self.steering = steering
-        self.braking = braking
-        self.velocity = velocity
-        self.lane_data = lane_data
-
-    def reset(self):
-        self.damage = 0.0
-        self.steering = 0.0
-        self.braking = 0.0
-        self.velocity = (0.0, 0.0, 0.0)
-        self.lane_data = (0.0, 0.0, 0.0, 0.0)
-
-    def set_data(self, damage, steering, braking, velocity, lane_data):
-        self.damage = damage
-        self.steering = steering
-        self.braking = braking
-        self.velocity = velocity
-        self.lane_data = lane_data
-    
-    def row(self):
-        return [self.damage, self.steering, self.braking, *self.velocity, *self.lane_data]
+        return self.position

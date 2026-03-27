@@ -1,19 +1,25 @@
 
 from run import start
-
+from const import TRAINING
+# Number of simulations to run
 SCENARIO_COUNT = 1
+
 
 def main():
     print("Starting simulation...")
+    # Initialize the simulation environment
     simulation = start.Simulation()
     simulation.beamng.ui.display_message("Starting simulation...")
     try:
-        i = 0
-        while i < SCENARIO_COUNT:
-            simulation.scenario_setup((i+1), ai=True)         
+        for i in range(SCENARIO_COUNT):
+            print(f"Setting up Scenario {i+1}...")
+            simulation.scenario_setup((i+1), ai=TRAINING)    
+
+            print(f"Running Scenario {i+1}...")
             simulation.event_schedular.simulate()
+
+            print(f"Cleaning up Scenario {i+1}...")
             simulation.scenario_cleanup()
-            i += 1
     except KeyboardInterrupt:
         print("\nInterrupted — shutting down...")
         simulation.scenario_cleanup()
