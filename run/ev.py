@@ -2,6 +2,7 @@ import math
 import random
 import const
 from time import sleep
+import queue
 
 """
 SoundEvent class to represent audio events in the simulation
@@ -191,7 +192,20 @@ class VehicleSoundEvent:
     def write_event(self):
         position, failed = self.position_data(relative=True)
         if not failed:
-            self.fsm.queue_soundevent_data(self.class_index, self.track_index, position)       
+            msg = (self.tick.frame_index, self.class_index, position[0], position[1], position[2])
+            try:
+                self.fsm.labelqueue[self.track_index].put_nowait(msg)
+            except queue.Full:
+                _ = self.fsm.labelqueue[self.track_index].get_nowait()
+                self.fsm.labelqueue[self.track_index].task_done()
+                self.fsm.labelqueue[self.track_index].put_nowait(msg)
+
     
     def write_reset(self):
-        self.fsm.queue_soundevent_data(self.class_index, self.track_index, (0.0, 0.0, 0.0))
+        msg = (self.tick.frame_index, self.class_index,  0.0, 0.0, 0.0)
+        try:
+            self.fsm.labelqueue[self.track_index].put_nowait(msg)
+        except queue.Full:
+            _ = self.fsm.labelqueue[self.track_index].get_nowait()
+            self.fsm.labelqueue[self.track_index].task_done()
+            self.fsm.labelqueue[self.track_index].put_nowait(msg)

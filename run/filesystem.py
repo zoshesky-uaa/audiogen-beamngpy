@@ -11,8 +11,6 @@ class FSM:
         self.tick = tick
         # Sets up the directory and Zarr files for training data
         self.training_root, self.label_set, self.feature_set = self.create_trial_data()
-        self.ev_event_buffer = [EventObj(3,i, (0.0, 0.0, 0.0)) for i in range(const.MAXIMUM_EMERGENCY_VEHICLES)]
-        
         # Queues for communication between audio and vehicle threads
         self.labelqueue = {queue_index: queue.Queue(maxsize=2) for queue_index in range(const.MAXIMUM_EMERGENCY_VEHICLES)}
         self.featurequeue = queue.Queue(maxsize=2)
@@ -47,9 +45,9 @@ class FSM:
         training_root = zarr.group(new_trial_path / "training_data.zarr")
         label_set = training_root.create_array(
             name="labels",
-            shape=(const.TOTAL_FRAMES+1, (const.MAXIMUM_EMERGENCY_VEHICLES), 3),
+            shape=(const.TOTAL_FRAMES+1, (const.MAXIMUM_VEHICLES), 4),
             dtype="f4",
-            chunks=(const.CHUNK_SIZE, const.MAXIMUM_EMERGENCY_VEHICLES, 3),
+            chunks=(const.CHUNK_SIZE, const.MAXIMUM_VEHICLES, 4),
             compressors=compressor
         )
 
@@ -71,27 +69,6 @@ class FSM:
         #     compressor=compressor
         # )
         return training_root, label_set, feature_set
-    
-    # ---------- Queue for FSM to read from ---------- 
-
-    def queue_soundevent_data(self, class_index,track_index, position):
-        if self.write_active:
-            msg = EventObj(class_index, track_index, position)
-            try:
-                self.eventqueue[track_index].put_nowait(msg)
-            except queue.Full:
-                    _ = self.eventqueue[track_index].get_nowait()
-                    self.eventqueue[track_index].task_done()
-                    self.eventqueue[track_index].put_nowait(msg)
-
-    def queue_feature_data(self, features):
-        if self.write_active:
-            try:
-                self.featurequeue.put_nowait(features)
-            except queue.Full:
-                _ = self.featurequeue.get_nowait()
-                self.featurequeue.task_done()
-                self.featurequeue.put_nowait(features)
 
     # Collection of primitives, do processing here instead in future
     # Poll: Damage, Steering, Braking, Velocity (x,y,z), Lane Distances (left line, center, right, halfwidth; remove the max to determine directionality)
@@ -104,21 +81,9 @@ class FSM:
     #             _ = self.driverqueue.get_nowait()
     #             self.driverqueue.task_done()
     #             self.driverqueue.put_nowait(msg)          
-    
-    #  ---------- Writing functions  ---------- 
-    # These functions read their relative queues (similar to rust spsc) to have lock-free updates
-
-
-    def write_driver_data(self):
-        try:
-            msg = self.driverqueue.get_nowait()
-            self.driverqueue.task_done()
-        except queue.Empty:
-            msg = None
-        if msg is not None:
-            self.driver_buffer = msg
-        #self.driver_set[self.tick.frame_index, :] = self.driver_buffer.row()
-
+ 
+#  ---------- Writing functions  ---------- 
+# These functions read their relative queues (similar to rust spsc) to have lock-free updates
 class ZarrWriter(threading.Thread):
     def __init__(self, feature_set, label_set, tick, labelqueue, featurequeue):
         super().__init__(daemon=True)
@@ -128,7 +93,7 @@ class ZarrWriter(threading.Thread):
         self.labelqueue = labelqueue
         self.featurequeue = featurequeue
         self.feature_buffer = np.zeros((const.CHUNK_SIZE, const.N_INPUTS, const.N_BINS), dtype="f4")
-        self.label_buffer = np.zeros((const.CHUNK_SIZE, const.MAXIMUM_EMERGENCY_VEHICLES, 3), dtype="f4")
+        self.label_buffer = np.zeros((const.CHUNK_SIZE, const.MAXIMUM_VEHICLES, 4), dtype="f4")
         self.next_flush_frame = const.CHUNK_SIZE
 
     def run(self):
@@ -141,15 +106,20 @@ class ZarrWriter(threading.Thread):
                 try:
                     msg = self.labelqueue[track_index].get_nowait()
                     self.labelqueue[track_index].task_done()
-                    self.label_buffer[self.tick.frame_index, track_index, :] = msg.row()
+                    local_idx = msg[0] % const.CHUNK_SIZE
+                    self.label_buffer[local_idx, track_index, :] = msg[1:]
                 except queue.Empty:
-                    pass
+                    local_idx = current_frame % const.CHUNK_SIZE
+                    # Check if the slot is all zeros before setting default
+                    if np.all(self.label_buffer[local_idx, track_index, :] == 0):
+                        self.label_buffer[local_idx, track_index, :] = [3, 0, 0, 0]
                          
             # Gets latest feature data from queue and updates feature buffer
-            try:                
-                features = self.featurequeue.get_nowait()
+            try:
+                msg = self.featurequeue.get_nowait()
                 self.featurequeue.task_done()
-                self.feature_buffer[self.tick.frame_index, :, :] = features
+                local_idx = msg[0] % const.CHUNK_SIZE
+                self.feature_buffer[local_idx, :, :] = msg[1]
             except queue.Empty:                
                 pass      
 
@@ -169,24 +139,11 @@ class ZarrWriter(threading.Thread):
                     print("Final partial chunk flushed.")
     
     def _flush_chunk(self, start, end):
-        self.label_set[start:end] = self.label_buffer[start:end]
-        self.feature_set[start:end] = self.feature_buffer[start:end]
-        
+        length = end - start
+        # Copy only the valid portion of the local chunk buffers to the global Zarr arrays
+        self.label_set[start:end] = self.label_buffer[0:length]
+        self.feature_set[start:end] = self.feature_buffer[0:length]
+
         print(f"Flushed chunk to Zarr: frames {start} to {end-1}")
         self.label_buffer.fill(0)
         self.feature_buffer.fill(0)
-
-class EventObj:
-    def __init__(self, class_index, track_index, position):
-        self.class_index = class_index
-        self.track_index = track_index
-        self.position = position
-    
-    def reset(self):
-        self.position = (0.0, 0.0, 0.0)
-
-    def set_position(self, position):
-        self.position = position
-
-    def row(self):
-        return self.position

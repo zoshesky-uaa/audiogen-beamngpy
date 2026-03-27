@@ -142,10 +142,6 @@ class Scheduler:
             case _: return   
         thread.start()  
 
-    def append_writer(self):
-        self.fsm.writer.start()
-        self.threads.append(self.fsm.writer)
-
     # Control flow function for the simulation
     def simulate(self):
         audio_data = None
@@ -157,8 +153,17 @@ class Scheduler:
 
         # Main scenario loop, starts audio recording and FSM writing
         print("Starting scenario loop.")
-        self.append_writer()
+        # Writer thread to write to Zarr dataset
+        self.fsm.writer.start()
+        self.threads.append(self.fsm.writer)
+
+        # Start recorder
         audio_data = recorder.AudioRec(tick=self.tick, fsm=self.fsm)
+
+        # FFT compute thread for audio feature extraction
+        audio_data.fft_thread.start()
+        self.threads.append(audio_data.fft_thread)
+
         self.tick.external_clock = True
         self.tick.start(const.TOTAL_FRAMES)
 
