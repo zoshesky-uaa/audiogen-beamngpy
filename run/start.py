@@ -125,6 +125,8 @@ class Simulation:
         if isinstance(pre_vehiclelist, dict) and all(isinstance(v, Vehicle) for v in pre_vehiclelist.values()):
             # Spawns a random number of traffic vehicles based on the constants defined, reduce to 0 for quicker testing
             n_amount = random.randint(const.MINIMUM_TRAFFIC_VEHICLES, const.MAXIMUM_TRAFFIC_VEHICLES)
+            # Sets what vehicles can be controlled and given sound events within the maximum range
+            control_count =  n_amount % const.MAXIMUM_CONTROLLABLE_VEHICLES
             # n_parked = random.randint(5, 10)
             # Traffic vehicle count + driver
             total = n_amount + 1
@@ -143,37 +145,45 @@ class Simulation:
                 # Assuming only one vehicle was spawned this will remove the driver vehicle
                 pre_vehicle_id = next(iter(pre_vehiclelist.keys()))  
                 traffic = {k: v for k, v in vehiclelist.items() if k != pre_vehicle_id}
-            
+               
                 for vid in traffic:
                     vehicle = vehiclelist[vid]
                     try: 
-                        self.dispatcher.send_sync(vehicle.connect, self.beamng, tries=10)
-                        self.event_schedular.append_event(1, vehicle)
+                        if control_count > 0:
+                            self.dispatcher.send_sync(vehicle.connect, self.beamng, tries=10)
+                            self.event_schedular.append_event(1, vehicle)
+                            control_count -= 1
+                        else:
+                            self.dispatcher.send_sync(vehicle.connect, self.beamng, tries=10)
+                            vehicle.ai.set_mode("traffic") 
                     except Exception as e:
                         print(f"Failed to connect vehicle {vid}: {e}")
                         self.dispatcher.send(self.beamng.vehicles.despawn, vehicle)
                         continue
         
         # Spawns a random number of emergency vehicles based on the constants defined
-        n_sirens = random.randint(const.MINIMUM_EMERGENCY_VEHICLES, const.MAXIMUM_EMERGENCY_VEHICLES)
-        print("Number of emergency vehicles: " + str(n_sirens) + ". Setting up emergency vehicles.")
+        n_police_rand = random.randint(const.MINIMUM_EMERGENCY_VEHICLES, const.MAXIMUM_EMERGENCY_VEHICLES)
+        control_count =  n_police_rand % const.MAXIMUM_CONTROLLABLE_VEHICLES
+
+        print("Number of emergency vehicles: " + str(n_police_rand) + ". Setting up emergency vehicles.")
         
         # Emergency Vehicle (Siren)
-        for i in range(n_sirens):
+        for i in range(n_police_rand):
             # Custom spawn for specifically emergency vehicles
             # Note: Finding a non-static spawning method for these emergency vehicles would be ideal
             vehicle = self.vehicle_controller.emergency_vehicle_spawn()
-            try: 
-                self.dispatcher.send_sync(vehicle.connect, self.beamng, tries=20)
-                self.event_schedular.append_event(3, vehicle)
+            try:
+                if control_count > 0:
+                    self.dispatcher.send_sync(vehicle.connect, self.beamng, tries=10)
+                    self.event_schedular.append_event(3, vehicle)
+                    control_count -= 1
+                else:
+                    self.dispatcher.send_sync(vehicle.connect, self.beamng, tries=10)
+                    vehicle.ai.set_mode("traffic") 
             except Exception as e:
                 print(f"Failed to connect vehicle {vehicle.vid}: {e}")
                 self.dispatcher.send(self.beamng.vehicles.despawn, vehicle)
                 continue
-            
-        # Empty vehicles for wrting resets, useful for data debugging
-        # for i in range(const.MINIMUM_EMERGENCY_VEHICLES - n_sirens):
-        #     self.event_schedular.append_event(3, None)
 
     # Stops all events, deletes the scenario, and despawns all vehicles if possible
     def scenario_cleanup(self):    
