@@ -34,7 +34,7 @@ class AudioRec:
         try:
             self.stream = sd.InputStream(samplerate=const.SAMPLING_FREQUENCY,
                                          channels=const.AUDIO_CHANNELS,
-                                         blocksize=int(const.SAMPLING_FREQUENCY / const.TICK_RATE)   ,
+                                         blocksize=int(const.SAMPLING_FREQUENCY / const.TICK_RATE),
                                          device=self.device,
                                          latency='low',
                                          dtype='float32',

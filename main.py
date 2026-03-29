@@ -2,7 +2,7 @@
 from run import start
 from const import TRAINING
 # Number of simulations to run
-SCENARIO_COUNT = 1
+SCENARIO_COUNT = 10
 
 
 def main():
