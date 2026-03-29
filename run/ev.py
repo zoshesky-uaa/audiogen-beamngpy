@@ -38,8 +38,6 @@ class VehicleSoundEvent:
         self.tick.waited_action_iterate(self.write_reset)
 
     def run(self):
-        # Sets the license plate, did this as as a check before but this is purely cosmetic
-        self.dispatcher.send(self.vehicle.set_license_plate, "EV")
         # Delays until warmup is started
         self.tick.waited_action(self.normal_behavior)
         # Lambda to select either an empty event or sirent event, passed to waited_action_iterate
@@ -115,8 +113,8 @@ class VehicleSoundEvent:
         def _snapshot_positions():
             try:  
                 failed = False
-                self.driver.sensors.poll()
-                self.vehicle.sensors.poll()
+                self.driver.sensors.poll('state') 
+                self.vehicle.sensors.poll('state') 
                 driver_state = self.driver.state if isinstance(self.driver.state, dict) else {}
                 vehicle_state = self.vehicle.state if isinstance(self.vehicle.state, dict) else {}
                 origin_position = driver_state.get('pos', (0.0, 0.0, 0.0))
@@ -149,8 +147,8 @@ class VehicleSoundEvent:
         def _snapshot_following():
             try:  
                 failed = False
-                self.driver.sensors.poll()
-                self.vehicle.sensors.poll()
+                self.driver.sensors.poll('state') 
+                self.vehicle.sensors.poll('state') 
                 follower_state = self.driver.state if isinstance(self.driver.state, dict) else {}
                 followed_state = self.vehicle.state if isinstance(self.vehicle.state, dict) else {}
                 follower_pos = follower_state.get('pos', (0.0, 0.0, 0.0))

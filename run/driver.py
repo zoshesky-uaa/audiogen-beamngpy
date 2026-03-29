@@ -22,35 +22,44 @@ class DriverRecorder:
         self.tick.waited_action()
         # Forces simulation to switch current camera (including the audio listener) back to the driver, sort of a hack
         self.dispatcher.send_sync(self.simulation.vehicle_controller.switch_to_driver)
+        self.dispatcher.send_sync(self.simulation.beamng.camera.set_player_mode, 
+                                self.driver,
+                                "orbit",
+                                {"distance": 5})
         #Write a else case for this for manual control parameters in the future
         if ai:
             self.normal_behavior()
         print("Driver connected.") 
         
         # Attaches additional sensors to the driver vehicle for data collection per request
-        self.electrics = Electrics()
-        self.dispatcher.send_sync(self.driver.sensors.attach, "electrics", self.electrics)
-        self.damage = Damage()
-        self.dispatcher.send_sync(self.driver.sensors.attach, "damage", self.damage)
-        self.roads_sensor = self.dispatcher.send_sync(
-            RoadsSensor,
-            "roads_sensor",
-            self.simulation.beamng,
-            self.driver,
-        )
+        # Trying to catch potential error conditions
+        try:
+            self.electrics = Electrics()
+            self.dispatcher.send_sync(self.driver.sensors.attach, "electrics", self.electrics)
+            self.damage = Damage()
+            self.dispatcher.send_sync(self.driver.sensors.attach, "damage", self.damage)
+            self.roads_sensor = self.dispatcher.send_sync(
+                RoadsSensor,
+                name="roads_sensor",
+                bng=self.simulation.beamng,
+                vehicle=self.driver
+            )
+        except Exception as e:
+            raise Exception("Error in driver recorder: " + str(e))
+        
         # Starts loop to poll driver sensors every tick
-        while self.tick.shutdown.is_set():
+        while not self.tick.shutdown.is_set():
             self.driver_poll()
-            sleep(const.TICK_DURATION_SECONDS/2) 
+            sleep(const.TICK_DURATION_SECONDS/2)
     
     def normal_behavior(self):
         # Sets some "normal" conditions for the vehicle
         if self.simulation.current_time != "noon":
             self.dispatcher.send(self.driver.set_lights, headlights=1)
         self.dispatcher.send(self.driver.ai.set_mode, "traffic")
-        self.dispatcher.send(self.driver.ai.set_aggression, 0.1)
+        self.dispatcher.send(self.driver.ai.set_aggression, 0.2)
         self.dispatcher.send(self.driver.ai.drive_in_lane, True)
-        #self.dispatcher.send(self.driver.ai.set_speed, 15.65, mode="limit")
+                
 
     def driver_poll(self):
         if not self.driver.is_connected():  
@@ -71,8 +80,7 @@ class DriverRecorder:
         def _snapshot_driver_state(): 
             try:  
                 failed = False
-                self.driver.sensors.poll()
-
+                self.driver.sensors.poll('state', 'electrics')
                 state = self.driver.state if isinstance(self.driver.state, dict) else {}  
                 raw_velocity = state.get('vel', (0.0, 0.0, 0.0))  
                 velocity = tuple(v * 2.237 for v in raw_velocity)

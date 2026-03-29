@@ -36,14 +36,13 @@ class VehicleSoundEvent:
         return
 
     def run(self):
-        self.dispatcher.send(self.vehicle.set_license_plate, "TRAFFIC")
         self.tick.waited_action(self.normal_behavior)
         # No behavior set here currently
         #self.tick.waited_action_iterate()
 
     def normal_behavior(self):
         self.dispatcher.send(self.vehicle.ai.set_mode, "traffic")
-        self.dispatcher.send(self.vehicle.ai.set_aggression, 0.1)
+        self.dispatcher.send(self.vehicle.ai.set_aggression, 0.2)
         self.dispatcher.send(self.vehicle.ai.drive_in_lane, True)
         #self.dispatcher.send(self.vehicle.ai.set_speed, 15.65, mode="limit")
     

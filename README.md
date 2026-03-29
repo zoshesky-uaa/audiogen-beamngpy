@@ -4,8 +4,7 @@ https://github.com/PortAudio/portaudio/wiki/Win32AudioBackgroundInfo
 * Voicemeter Input = Voicemeter Out B1
 
 ## Bugs:
-1) Audio status string: input overflow, apparently the callback is having issues I have no idea.
-2) Zarr writer doesn't do anything? (I don't see any file size change to the files), likely due to the issue above and zeros being compressed to basically nothing.
+1) Camera fixes, believe data is flowing correctly and stability is normalized (still ocassional issue)
 
 ## Current Objectives:
 1) Procesing the poll data from `driver.py` into the respective data type information required, then write it to a zarr file. 

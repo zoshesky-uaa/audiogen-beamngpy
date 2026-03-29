@@ -1,80 +1,160 @@
 from beamngpy import Vehicle
 import random
-from spawns import west_coast_usa
+import math
+from beamngpy import angle_to_quat 
+from time import sleep
 
 class builder:
     def __init__(self, simulation):
         self.name = None
-        self.environment = random.choices([west_coast_usa.builder()], weights=[1], k=1)[0]
         self.simulation = simulation
-        self.EV = EV.copy()
         self.driver = None
+        self.roads = None
+        self.traffic_count = 0
+        self.ev_count = 0
+    
+    def get_road_network(self):
+        road_network = self.simulation.dispatcher.send_sync(
+            self.simulation.beamng.scenario.get_road_network
+        )
 
-    def emergency_vehicle_spawn(self):
-        spawn = self.environment.random_location()
-        ev = self.random_EV()
-        self.simulation.dispatcher.send(self.simulation.beamng.vehicles.spawn, ev, pos=spawn[0], rot_quat=spawn[1], cling=True)
-        return ev
+        self.roads = [
+            road for road in road_network.values() 
+            if 'edges' in road and len(road['edges']) > 1
+        ]
+        
+
+    def road_random_spawn(self):
+        #Pick a random valid road
+        chosen_road = random.choice(self.roads)
+        points = chosen_road['edges']
+    
+        # Pick a random segment along that road (up to the second-to-last node)
+        idx = random.randint(0, len(points) - 2)
+
+        # Randomly pick the left or right side of the road
+        side = random.choice(['left', 'right'])   
+
+        # Extract coordinates for the chosen side
+        p1 = points[idx][side]
+        p2 = points[idx + 1][side]
+        
+        # Calculate heading between point 1 and point 2
+        dx = p2[0] - p1[0]
+        dy = p2[1] - p1[1]
+        heading = math.atan2(dy, dx)
+
+        # Flip sides if on the left
+        if side == 'left':
+            heading += math.pi   
+
+        # Generate the spawn dictionary format
+        pos = (p1[0], p1[1], p1[2])
+        rot_quat = angle_to_quat((0, 0, heading))
+        
+        return pos, rot_quat
+
+    
+    def vehicle_spawn(self, EV=False):
+        spawn = self.road_random_spawn()
+        if EV:
+            template = self.random_EV()
+            vehicle = Vehicle(
+                vid=template.vid + f" EV_{self.ev_count}",
+                model=template.options.get('model'),
+                part_config=template.options.get('partConfig'),
+                licence=template.options.get('licence')
+            )
+            self.ev_count += 1
+        else:
+            template = self.random_vehicle()
+            vehicle = Vehicle(
+                vid=template.vid + f" TV_{self.traffic_count}",
+                model=template.options.get('model'),
+                part_config=template.options.get('partConfig'),
+                licence=template.options.get('licence')
+            )
+            self.traffic_count += 1
+        self.simulation.dispatcher.send(self.simulation.beamng.vehicles.spawn, vehicle, pos=spawn[0], rot_quat=spawn[1], cling=True, connect=False)
+        return vehicle
     
     def driver_presetup(self):
-        spawn = self.environment.random_location()
+        # Driver must have a position before the scenario is loaded and loaded before scenario is made,
+        # So therefore I had to extract random positions, getting a better list is ideal
+        spawn = self.simulation.environment.random_location()
         driver = self.random_vehicle()
         # Store the driver reference
         self.driver = driver  
-        self.simulation.dispatcher.send(self.simulation.scenario.add_vehicle, driver, pos=spawn[0], rot_quat=spawn[1], cling=True)
+        self.simulation.dispatcher.send_sync(self.simulation.scenario.add_vehicle, driver, pos=spawn[0], rot_quat=spawn[1], cling=True)
         return driver
+    
+    def camera_setup(self):
+        def free_camera_hold(self):
+            # Get driver's current position  
+            self.driver.sensors.poll('state')  
+            driver_pos = self.driver.state['pos']  
+                
+            # Set free camera to driver's position (slightly above and behind)  
+            camera_pos = (driver_pos[0], driver_pos[1] - 5, driver_pos[2])  
+            direction = (0, 1, 0) 
+                
+            # Set free camera at driver's position   
+            self.simulation.beamng.camera.set_free(camera_pos, direction) 
+        self.simulation.dispatcher.send_sync(free_camera_hold, self)
 
     def switch_to_driver(self):
         self.simulation.dispatcher.send(self.simulation.beamng.vehicles.switch,self.driver)
 
     def random_EV(self):
-        ev = random.choice(self.EV)
-        self.EV.remove(ev)
+        ev = random.choice(EV)
         return ev
 
     def random_vehicle(self):
         return random.choice(NORMAL)
+    
+    def random_traffic(self):
+        traffic = random.choice(OTHER)
+        return traffic
 
-    def reset(self):
-        self.EV = EV.copy()
-        self.environment.reset()
+
     
 EV = [
-    Vehicle('(Vehicle) Wydra Rescue (CVT)', model='atv', part_config='vehicles/atv/rescue.pc', licence='DRIVER'),
-    Vehicle('(Vehicle) Bolide 350 Polizia (M)', model='bolide', part_config='vehicles/bolide/polizia.pc', licence='DRIVER'),
-    Vehicle('(Vehicle) FCV Vivace Polizia (M)', model='vivace', part_config='vehicles/vivace/vivace_polizia.pc', licence='DRIVER'),
-    Vehicle('(Vehicle) FCV Vivace S Gendarmerie (DCT)', model='vivace', part_config='vehicles/vivace/vivace_S_gendarmerie.pc', licence='DRIVER'),
-    Vehicle('(Vehicle) FCV Tograc Polizia (M)', model='vivace', part_config='vehicles/vivace/tograc_polizia.pc', licence='DRIVER'),
-    Vehicle('(Vehicle) Hopper Carabinieri (M)', model='hopper', part_config='vehicles/hopper/carabinieri.pc', licence='DRIVER'),
-    Vehicle('(Vehicle) Hopper Sheriff (M)', model='hopper', part_config='vehicles/hopper/sheriff.pc', licence='DRIVER'),
-    Vehicle('(Vehicle) Scintilla GTs Polizia (DCT)', model='scintilla', part_config='vehicles/scintilla/gts_polizia.pc', licence='DRIVER'),
-    Vehicle('(Vehicle) Pessima Police (A)', model='midsize', part_config='vehicles/midsize/police.pc', licence='DRIVER'),
-    Vehicle('(Vehicle) Covet Police (A)', model='covet', part_config='vehicles/covet/police.pc', licence='DRIVER'),
-    Vehicle('(Vehicle) Wendover Police Interceptor (A)', model='wendover', part_config='vehicles/wendover/interceptor.pc', licence='DRIVER'),
-    Vehicle('(Vehicle) Bluebuck Police Package (A)', model='bluebuck', part_config='vehicles/bluebuck/police.pc', licence='DRIVER'),
-    Vehicle('(Vehicle) Bluebuck Police Interceptor (A)', model='bluebuck', part_config='vehicles/bluebuck/interceptor.pc', licence='DRIVER'),
-    Vehicle('(Vehicle) D-Series D45 Off-Road Ambulance (A)', model='pickup', part_config='vehicles/pickup/d45_diesel_4wd_ambulance_A.pc', licence='DRIVER'),
-    Vehicle('(Vehicle) Special 313 V8 4-Door Sedan Police Package (A)', model='burnside', part_config='vehicles/burnside/4door_late_v8_3A_police.pc', licence='DRIVER'),
-    Vehicle('(Vehicle) Roamer Fire Chief (A)', model='roamer', part_config='vehicles/roamer/firechief.pc', licence='DRIVER'),
-    Vehicle('(Vehicle) Roamer Belasco City Police Department (A)', model='roamer', part_config='vehicles/roamer/police.pc', licence='DRIVER'),
-    Vehicle('(Vehicle) Roamer LXT35 Police Package (Unmarked) (A)', model='roamer', part_config='vehicles/roamer/unmarked.pc', licence='DRIVER'),
-    Vehicle('(Vehicle) Roamer Sheriff (A)', model='roamer', part_config='vehicles/roamer/sheriff.pc', licence='DRIVER'),
-    Vehicle('(Vehicle) MD-Series MD60 Armored Police (M)', model='md_series', part_config='vehicles/md_series/md_60_armored_police.pc', licence='DRIVER'),
-    Vehicle('(Vehicle) MD-Series MD70 Ambulance 4WD (M)', model='md_series', part_config='vehicles/md_series/md_70_ambulance_4wd.pc', licence='DRIVER'),
-    Vehicle('(Vehicle) MD-Series MD60 Ambulance (A)', model='md_series', part_config='vehicles/md_series/md_60_ambulance.pc', licence='DRIVER'),
-    Vehicle('(Vehicle) Bastion Police (Unmarked) 5.7 AWD (A)', model='bastion', part_config='vehicles/bastion/police_unmarked_v8_awd_A.pc', licence='DRIVER'),
-    Vehicle('(Vehicle) Bastion Police 5.7 AWD (A)', model='bastion', part_config='vehicles/bastion/police_v8_awd_A.pc', licence='DRIVER'),
-    Vehicle('(Vehicle) LeGran Fire Chief (Facelift) (A)', model='legran', part_config='vehicles/legran/firechief.pc', licence='DRIVER'),
-    Vehicle('(Vehicle) Grand Marshal Belasco City Police Department (A)', model='fullsize', part_config='vehicles/fullsize/bcpd.pc', licence='DRIVER'),
-    Vehicle('(Vehicle) Grand Marshal Police Package (Unmarked) (A)', model='fullsize', part_config='vehicles/fullsize/unmarked.pc', licence='DRIVER'),
-    Vehicle('(Vehicle) Grand Marshal Police Package (A)', model='fullsize', part_config='vehicles/fullsize/police.pc', licence='DRIVER'),
-    Vehicle('(Vehicle) D-Series D45 Ambulance (A)', model='pickup', part_config='vehicles/pickup/d45_ambulance_A.pc', licence='DRIVER'),
-    Vehicle('(Vehicle) Sunburst Polizia (DCT)', model='sunburst2', part_config='vehicles/sunburst2/polizia.pc', licence='DRIVER'),
-    Vehicle('(Vehicle) Sunburst Gendarmerie (DCT)', model='sunburst2', part_config='vehicles/sunburst2/gendarmerie.pc', licence='DRIVER'),
-    Vehicle('(Vehicle) Sunburst Police Package (CVT)', model='sunburst2', part_config='vehicles/sunburst2/police.pc', licence='DRIVER'),
-    Vehicle('(Vehicle) Sunburst Police Interceptor (DCT)', model='sunburst2', part_config='vehicles/sunburst2/interceptor.pc', licence='DRIVER'),
-    Vehicle('(Vehicle) Lansdale 3.3 S Police (A)', model='lansdale', part_config='vehicles/lansdale/33_police_late_A.pc', licence='DRIVER'),
+    Vehicle('(Vehicle) Wydra Rescue (CVT)', model='atv', part_config='vehicles/atv/rescue.pc', licence='EV'),
+    Vehicle('(Vehicle) Bolide 350 Polizia (M)', model='bolide', part_config='vehicles/bolide/polizia.pc', licence='EV'),
+    Vehicle('(Vehicle) FCV Vivace Polizia (M)', model='vivace', part_config='vehicles/vivace/vivace_polizia.pc', licence='EV'),
+    Vehicle('(Vehicle) FCV Vivace S Gendarmerie (DCT)', model='vivace', part_config='vehicles/vivace/vivace_S_gendarmerie.pc', licence='EV'),
+    Vehicle('(Vehicle) FCV Tograc Polizia (M)', model='vivace', part_config='vehicles/vivace/tograc_polizia.pc', licence='EV'),
+    Vehicle('(Vehicle) Hopper Carabinieri (M)', model='hopper', part_config='vehicles/hopper/carabinieri.pc', licence='EV'),
+    Vehicle('(Vehicle) Hopper Sheriff (M)', model='hopper', part_config='vehicles/hopper/sheriff.pc', licence='EV'),
+    Vehicle('(Vehicle) Scintilla GTs Polizia (DCT)', model='scintilla', part_config='vehicles/scintilla/gts_polizia.pc', licence='EV'),
+    Vehicle('(Vehicle) Pessima Police (A)', model='midsize', part_config='vehicles/midsize/police.pc', licence='EV'),
+    Vehicle('(Vehicle) Covet Police (A)', model='covet', part_config='vehicles/covet/police.pc', licence='EV'),
+    Vehicle('(Vehicle) Wendover Police Interceptor (A)', model='wendover', part_config='vehicles/wendover/interceptor.pc', licence='EV'),
+    Vehicle('(Vehicle) Bluebuck Police Package (A)', model='bluebuck', part_config='vehicles/bluebuck/police.pc', licence='EV'),
+    Vehicle('(Vehicle) Bluebuck Police Interceptor (A)', model='bluebuck', part_config='vehicles/bluebuck/interceptor.pc', licence='EV'),
+    Vehicle('(Vehicle) D-Series D45 Off-Road Ambulance (A)', model='pickup', part_config='vehicles/pickup/d45_diesel_4wd_ambulance_A.pc', licence='EV'),
+    Vehicle('(Vehicle) Special 313 V8 4-Door Sedan Police Package (A)', model='burnside', part_config='vehicles/burnside/4door_late_v8_3A_police.pc', licence='EV'),
+    Vehicle('(Vehicle) Roamer Fire Chief (A)', model='roamer', part_config='vehicles/roamer/firechief.pc', licence='EV'),
+    Vehicle('(Vehicle) Roamer Belasco City Police Department (A)', model='roamer', part_config='vehicles/roamer/police.pc', licence='EV'),
+    Vehicle('(Vehicle) Roamer LXT35 Police Package (Unmarked) (A)', model='roamer', part_config='vehicles/roamer/unmarked.pc', licence='EV'),
+    Vehicle('(Vehicle) Roamer Sheriff (A)', model='roamer', part_config='vehicles/roamer/sheriff.pc', licence='EV'),
+    Vehicle('(Vehicle) MD-Series MD60 Armored Police (M)', model='md_series', part_config='vehicles/md_series/md_60_armored_police.pc', licence='EV'),
+    Vehicle('(Vehicle) MD-Series MD70 Ambulance 4WD (M)', model='md_series', part_config='vehicles/md_series/md_70_ambulance_4wd.pc', licence='EV'),
+    Vehicle('(Vehicle) MD-Series MD60 Ambulance (A)', model='md_series', part_config='vehicles/md_series/md_60_ambulance.pc', licence='EV'),
+    Vehicle('(Vehicle) Bastion Police (Unmarked) 5.7 AWD (A)', model='bastion', part_config='vehicles/bastion/police_unmarked_v8_awd_A.pc', licence='EV'),
+    Vehicle('(Vehicle) Bastion Police 5.7 AWD (A)', model='bastion', part_config='vehicles/bastion/police_v8_awd_A.pc', licence='EV'),
+    Vehicle('(Vehicle) LeGran Fire Chief (Facelift) (A)', model='legran', part_config='vehicles/legran/firechief.pc', licence='EV'),
+    Vehicle('(Vehicle) Grand Marshal Belasco City Police Department (A)', model='fullsize', part_config='vehicles/fullsize/bcpd.pc', licence='EV'),
+    Vehicle('(Vehicle) Grand Marshal Police Package (Unmarked) (A)', model='fullsize', part_config='vehicles/fullsize/unmarked.pc', licence='EV'),
+    Vehicle('(Vehicle) Grand Marshal Police Package (A)', model='fullsize', part_config='vehicles/fullsize/police.pc', licence='EV'),
+    Vehicle('(Vehicle) D-Series D45 Ambulance (A)', model='pickup', part_config='vehicles/pickup/d45_ambulance_A.pc', licence='EV'),
+    Vehicle('(Vehicle) Sunburst Polizia (DCT)', model='sunburst2', part_config='vehicles/sunburst2/polizia.pc', licence='EV'),
+    Vehicle('(Vehicle) Sunburst Gendarmerie (DCT)', model='sunburst2', part_config='vehicles/sunburst2/gendarmerie.pc', licence='EV'),
+    Vehicle('(Vehicle) Sunburst Police Package (CVT)', model='sunburst2', part_config='vehicles/sunburst2/police.pc', licence='EV'),
+    Vehicle('(Vehicle) Sunburst Police Interceptor (DCT)', model='sunburst2', part_config='vehicles/sunburst2/interceptor.pc', licence='EV'),
+    Vehicle('(Vehicle) Lansdale 3.3 S Police (A)', model='lansdale', part_config='vehicles/lansdale/33_police_late_A.pc', licence='EV'),
 ]
+
 
 NORMAL = [
     Vehicle('(Vehicle) H-Series H35 Vanster Long Wheelbase (A)', model='van', part_config='vehicles/van/h35_ext_vanster.pc', licence='DRIVER'),
@@ -153,115 +233,115 @@ NORMAL = [
     Vehicle('(Vehicle) Bastion Luxe 5.7 (A)', model='bastion', part_config='vehicles/bastion/luxe_v8_A.pc', licence='DRIVER'),
 ]
 
-# OTHER = [
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril H-Series Vanster', model='simple_traffic', part_config='vehicles/simple_traffic/van_vanster.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles ETK I-Series 2400i', model='simple_traffic', part_config='vehicles/simple_traffic/etki_eu_facelift.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril Grand Marshal V8 Luxe', model='simple_traffic', part_config='vehicles/simple_traffic/fullsize_luxe.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Cherrier Tograc qE', model='simple_traffic', part_config='vehicles/simple_traffic/tograc_ev.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Lansdale S', model='simple_traffic', part_config='vehicles/simple_traffic/lansdale_eu_pre_mid.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Hirochi Sunburst Sport RS Sedan', model='simple_traffic', part_config='vehicles/simple_traffic/sunburst2_sedan_wide.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Ibishu Pessima (New) Turboburger', model='simple_traffic', part_config='vehicles/simple_traffic/midsize_turboburger.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Hirochi Sunburst Sport RS Sedan', model='simple_traffic', part_config='vehicles/simple_traffic/sunburst2_eu_sedan_wide.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril D-Series Charro 4WD', model='simple_traffic', part_config='vehicles/simple_traffic/pickup_d10.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles ETK 800-Series xc Wagon', model='simple_traffic', part_config='vehicles/simple_traffic/etk800_eu_xc.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Ibishu Pessima (Old) HX', model='simple_traffic', part_config='vehicles/simple_traffic/pessima_aero.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Cherrier Vivace 230S', model='simple_traffic', part_config='vehicles/simple_traffic/vivace_sport.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Wendover 3300', model='simple_traffic', part_config='vehicles/simple_traffic/wendover_pre_base.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril H-Series Vanster Beamcom', model='simple_traffic', part_config='vehicles/simple_traffic/van_beamcom.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Bruckell LeGran Sedan Regulier', model='simple_traffic', part_config='vehicles/simple_traffic/legran_sedan_pre_regulier.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Ibishu BX-Series DX Hatchback', model='simple_traffic', part_config='vehicles/simple_traffic/bx_base_hatch.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Hirochi Sunburst Sport RS-Aero Wagon', model='simple_traffic', part_config='vehicles/simple_traffic/sunburst2_wagon_aero.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril Grand Marshal Taxi', model='simple_traffic', part_config='vehicles/simple_traffic/fullsize_taxi.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Hirochi Sunburst Sport Wagon', model='simple_traffic', part_config='vehicles/simple_traffic/sunburst2_eu_wagon_sport.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Hirochi Sunburst Sport Sedan', model='simple_traffic', part_config='vehicles/simple_traffic/sunburst2_sedan_sport.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Bruckell LeGran Sedan S', model='simple_traffic', part_config='vehicles/simple_traffic/legran_sedan_pre_s.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Bruckell LeGran Wagon Luxe', model='simple_traffic', part_config='vehicles/simple_traffic/legran_wagon_pre_luxe.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles ETK K-Series kc6x 360', model='simple_traffic', part_config='vehicles/simple_traffic/etkc_kc6.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril D-Series Fleet Extended Cab', model='simple_traffic', part_config='vehicles/simple_traffic/pickup_d25.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril Grand Marshal Fleet', model='simple_traffic', part_config='vehicles/simple_traffic/fullsize_fleet.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles ETK K-Series kc4 250', model='simple_traffic', part_config='vehicles/simple_traffic/etkc_kc4.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Ibishu Pessima (Old) LX', model='simple_traffic', part_config='vehicles/simple_traffic/pessima_standard.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Cherrier Vivace 110', model='simple_traffic', part_config='vehicles/simple_traffic/vivace_base.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Lansdale S Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/lansdale_eu_facelift_mid.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril D-Series 4WD ', model='simple_traffic', part_config='vehicles/simple_traffic/pickup_d15.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Lansdale Cargo Van', model='simple_traffic', part_config='vehicles/simple_traffic/lansdale_eu_pre_van.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Lansdale', model='simple_traffic', part_config='vehicles/simple_traffic/lansdale_eu_pre_base.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Bruckell LeGran Sedan Sport', model='simple_traffic', part_config='vehicles/simple_traffic/legran_sedan_pre_sport.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Cherrier Tograc 160Q', model='simple_traffic', part_config='vehicles/simple_traffic/tograc_standard.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles ETK 800-Series 250 Wagon', model='simple_traffic', part_config='vehicles/simple_traffic/etk800_eu_high_wagon.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Ibishu Pessima (Old) GTz', model='simple_traffic', part_config='vehicles/simple_traffic/pessima_sport.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril Roamer V8 4WD LXT', model='simple_traffic', part_config='vehicles/simple_traffic/roamer_ext.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles ETK K-Series kc6x 360', model='simple_traffic', part_config='vehicles/simple_traffic/etkc_eu_kc6.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles ETK I-Series 2400', model='simple_traffic', part_config='vehicles/simple_traffic/etki_pre.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Ibishu BX-Series LX Coupe', model='simple_traffic', part_config='vehicles/simple_traffic/bx_sport_coupe.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles ETK I-Series 2400', model='simple_traffic', part_config='vehicles/simple_traffic/etki_eu_pre.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Ibishu Covet Driving School Car', model='simple_traffic', part_config='vehicles/simple_traffic/covet_drivingschool.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Lansdale SE AWD', model='simple_traffic', part_config='vehicles/simple_traffic/lansdale_pre_high.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Lansdale Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/lansdale_eu_facelift_base.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Bruckell Bastion Sport', model='simple_traffic', part_config='vehicles/simple_traffic/bastion_sport.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril Roamer V8 4WD LXT Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/roamer_ext_facelift.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles ETK 800-Series 150 Wagon', model='simple_traffic', part_config='vehicles/simple_traffic/etk800_base_wagon.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril D-Series Crew Cab Dually', model='simple_traffic', part_config='vehicles/simple_traffic/pickup_d35.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles ETK 800-Series 250 Sedan', model='simple_traffic', part_config='vehicles/simple_traffic/etk800_eu_high_sedan.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Hirochi Sunburst Sport RS-Aero Sedan', model='simple_traffic', part_config='vehicles/simple_traffic/sunburst2_sedan_aero.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Bruckell LeGran Sedan Regulier Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/legran_sedan_facelift_regulier.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Ibishu BX-Series LXz Hatchback', model='simple_traffic', part_config='vehicles/simple_traffic/bx_sport_hatch.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril Roamer V8 Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/roamer_base_facelift.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Ibishu BX-Series DX Coupe', model='simple_traffic', part_config='vehicles/simple_traffic/bx_base_coupe.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Hirochi Sunburst Base Sedan', model='simple_traffic', part_config='vehicles/simple_traffic/sunburst2_sedan_base.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Hirochi Sunburst Base Wagon', model='simple_traffic', part_config='vehicles/simple_traffic/sunburst2_wagon_base.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles ETK I-Series 2400i', model='simple_traffic', part_config='vehicles/simple_traffic/etki_facelift.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril H-Series XT Passenger', model='simple_traffic', part_config='vehicles/simple_traffic/van_passenger.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Bruckell LeGran Wagon Regulier Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/legran_wagon_facelift_regulier.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles ETK 800-Series 150 Sedan', model='simple_traffic', part_config='vehicles/simple_traffic/etk800_eu_base_sedan.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Ibishu Pessima (Old) Street Tuned', model='simple_traffic', part_config='vehicles/simple_traffic/pessima_tuner.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles ETK K-Series kc4 250', model='simple_traffic', part_config='vehicles/simple_traffic/etkc_eu_kc4.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Ibishu Covet LXi', model='simple_traffic', part_config='vehicles/simple_traffic/covet_high.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Bruckell LeGran Sedan S Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/legran_sedan_facelift_s.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril Roamer V8', model='simple_traffic', part_config='vehicles/simple_traffic/roamer_base.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril D-Series Cargo Box Upfit', model='simple_traffic', part_config='vehicles/simple_traffic/pickup_d45.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles ETK 800-Series 250 Sedan', model='simple_traffic', part_config='vehicles/simple_traffic/etk800_high_sedan.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Bruckell LeGran Sedan Luxe', model='simple_traffic', part_config='vehicles/simple_traffic/legran_sedan_pre_luxe.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Ibishu Pessima (New) DX', model='simple_traffic', part_config='vehicles/simple_traffic/midsize_dx.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Wendover SE 3800 Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/wendover_facelift_high.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Ibishu Pessima (New) LX', model='simple_traffic', part_config='vehicles/simple_traffic/midsize_lx.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Hirochi Sunburst Sport Wagon', model='simple_traffic', part_config='vehicles/simple_traffic/sunburst2_wagon_sport.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Hirochi Sunburst Base Wagon', model='simple_traffic', part_config='vehicles/simple_traffic/sunburst2_eu_wagon_base.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril Grand Marshal V8', model='simple_traffic', part_config='vehicles/simple_traffic/fullsize_stock.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Wendover 3300 Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/wendover_facelift_base.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Lansdale SE AWD', model='simple_traffic', part_config='vehicles/simple_traffic/lansdale_eu_pre_high.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril H-Series Cargo Box', model='simple_traffic', part_config='vehicles/simple_traffic/van_cargobox.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Hirochi Sunburst Sport RS Wagon', model='simple_traffic', part_config='vehicles/simple_traffic/sunburst2_eu_wagon_wide.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Hirochi Sunburst Base Sedan', model='simple_traffic', part_config='vehicles/simple_traffic/sunburst2_eu_sedan_base.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Lansdale S Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/lansdale_facelift_mid.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Cherrier Vivace E', model='simple_traffic', part_config='vehicles/simple_traffic/vivace_ev.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Hirochi Sunburst Sport RS-Aero Sedan', model='simple_traffic', part_config='vehicles/simple_traffic/sunburst2_eu_sedan_aero.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril H-Series XT Passenger Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/van_passenger_facelift.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles ETK 800-Series 150 Sedan', model='simple_traffic', part_config='vehicles/simple_traffic/etk800_base_sedan.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Bruckell LeGran Wagon S Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/legran_wagon_facelift_s.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles ETK 800-Series 250 Wagon', model='simple_traffic', part_config='vehicles/simple_traffic/etk800_high_wagon.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Ibishu Covet DXi', model='simple_traffic', part_config='vehicles/simple_traffic/covet_base.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Hirochi Sunburst Sport Sedan', model='simple_traffic', part_config='vehicles/simple_traffic/sunburst2_eu_sedan_sport.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Lansdale S', model='simple_traffic', part_config='vehicles/simple_traffic/lansdale_pre_mid.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Cherrier Tograc 110', model='simple_traffic', part_config='vehicles/simple_traffic/tograc_base.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Lansdale Cargo Van', model='simple_traffic', part_config='vehicles/simple_traffic/lansdale_pre_van.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Lansdale Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/lansdale_facelift_base.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Wendover S 3800', model='simple_traffic', part_config='vehicles/simple_traffic/wendover_pre_high.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Hirochi Sunburst Sport RS-Aero Wagon', model='simple_traffic', part_config='vehicles/simple_traffic/sunburst2_eu_wagon_aero.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Lansdale SE AWD Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/lansdale_eu_facelift_high.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Cherrier Vivace 160', model='simple_traffic', part_config='vehicles/simple_traffic/vivace_standard.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Lansdale SE AWD Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/lansdale_facelift_high.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Bruckell Bastion Base', model='simple_traffic', part_config='vehicles/simple_traffic/bastion_base.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril H-Series Vanster Rapid Delivery', model='simple_traffic', part_config='vehicles/simple_traffic/van_delivery.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Bruckell LeGran Wagon S', model='simple_traffic', part_config='vehicles/simple_traffic/legran_wagon_pre_s.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril H-Series Vanster Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/van_vanster_facelift.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles ETK 800-Series xc Wagon', model='simple_traffic', part_config='vehicles/simple_traffic/etk800_xc.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Hirochi Sunburst Sport RS Wagon', model='simple_traffic', part_config='vehicles/simple_traffic/sunburst2_wagon_wide.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Lansdale', model='simple_traffic', part_config='vehicles/simple_traffic/lansdale_pre_base.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Bruckell LeGran Wagon SE Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/legran_wagon_facelift_se.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Bruckell LeGran Wagon Regulier', model='simple_traffic', part_config='vehicles/simple_traffic/legran_wagon_pre_regulier.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Cherrier Vivace S 270', model='simple_traffic', part_config='vehicles/simple_traffic/vivace_wide.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles ETK 800-Series 150 Wagon', model='simple_traffic', part_config='vehicles/simple_traffic/etk800_eu_base_wagon.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Lansdale Taxi', model='simple_traffic', part_config='vehicles/simple_traffic/lansdale_pre_taxi.pc', licence='DRIVER'),
-#     Vehicle('(Vehicle) Simplified Traffic Vehicles Bruckell Bastion Luxe', model='simple_traffic', part_config='vehicles/simple_traffic/bastion_luxe.pc', licence='DRIVER'),
-# ]
+OTHER = [
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril H-Series Vanster', model='simple_traffic', part_config='vehicles/simple_traffic/van_vanster.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles ETK I-Series 2400i', model='simple_traffic', part_config='vehicles/simple_traffic/etki_eu_facelift.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril Grand Marshal V8 Luxe', model='simple_traffic', part_config='vehicles/simple_traffic/fullsize_luxe.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Cherrier Tograc qE', model='simple_traffic', part_config='vehicles/simple_traffic/tograc_ev.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Lansdale S', model='simple_traffic', part_config='vehicles/simple_traffic/lansdale_eu_pre_mid.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Hirochi Sunburst Sport RS Sedan', model='simple_traffic', part_config='vehicles/simple_traffic/sunburst2_sedan_wide.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Ibishu Pessima (New) Turboburger', model='simple_traffic', part_config='vehicles/simple_traffic/midsize_turboburger.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Hirochi Sunburst Sport RS Sedan', model='simple_traffic', part_config='vehicles/simple_traffic/sunburst2_eu_sedan_wide.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril D-Series Charro 4WD', model='simple_traffic', part_config='vehicles/simple_traffic/pickup_d10.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles ETK 800-Series xc Wagon', model='simple_traffic', part_config='vehicles/simple_traffic/etk800_eu_xc.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Ibishu Pessima (Old) HX', model='simple_traffic', part_config='vehicles/simple_traffic/pessima_aero.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Cherrier Vivace 230S', model='simple_traffic', part_config='vehicles/simple_traffic/vivace_sport.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Wendover 3300', model='simple_traffic', part_config='vehicles/simple_traffic/wendover_pre_base.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril H-Series Vanster Beamcom', model='simple_traffic', part_config='vehicles/simple_traffic/van_beamcom.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Bruckell LeGran Sedan Regulier', model='simple_traffic', part_config='vehicles/simple_traffic/legran_sedan_pre_regulier.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Ibishu BX-Series DX Hatchback', model='simple_traffic', part_config='vehicles/simple_traffic/bx_base_hatch.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Hirochi Sunburst Sport RS-Aero Wagon', model='simple_traffic', part_config='vehicles/simple_traffic/sunburst2_wagon_aero.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril Grand Marshal Taxi', model='simple_traffic', part_config='vehicles/simple_traffic/fullsize_taxi.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Hirochi Sunburst Sport Wagon', model='simple_traffic', part_config='vehicles/simple_traffic/sunburst2_eu_wagon_sport.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Hirochi Sunburst Sport Sedan', model='simple_traffic', part_config='vehicles/simple_traffic/sunburst2_sedan_sport.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Bruckell LeGran Sedan S', model='simple_traffic', part_config='vehicles/simple_traffic/legran_sedan_pre_s.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Bruckell LeGran Wagon Luxe', model='simple_traffic', part_config='vehicles/simple_traffic/legran_wagon_pre_luxe.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles ETK K-Series kc6x 360', model='simple_traffic', part_config='vehicles/simple_traffic/etkc_kc6.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril D-Series Fleet Extended Cab', model='simple_traffic', part_config='vehicles/simple_traffic/pickup_d25.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril Grand Marshal Fleet', model='simple_traffic', part_config='vehicles/simple_traffic/fullsize_fleet.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles ETK K-Series kc4 250', model='simple_traffic', part_config='vehicles/simple_traffic/etkc_kc4.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Ibishu Pessima (Old) LX', model='simple_traffic', part_config='vehicles/simple_traffic/pessima_standard.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Cherrier Vivace 110', model='simple_traffic', part_config='vehicles/simple_traffic/vivace_base.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Lansdale S Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/lansdale_eu_facelift_mid.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril D-Series 4WD ', model='simple_traffic', part_config='vehicles/simple_traffic/pickup_d15.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Lansdale Cargo Van', model='simple_traffic', part_config='vehicles/simple_traffic/lansdale_eu_pre_van.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Lansdale', model='simple_traffic', part_config='vehicles/simple_traffic/lansdale_eu_pre_base.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Bruckell LeGran Sedan Sport', model='simple_traffic', part_config='vehicles/simple_traffic/legran_sedan_pre_sport.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Cherrier Tograc 160Q', model='simple_traffic', part_config='vehicles/simple_traffic/tograc_standard.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles ETK 800-Series 250 Wagon', model='simple_traffic', part_config='vehicles/simple_traffic/etk800_eu_high_wagon.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Ibishu Pessima (Old) GTz', model='simple_traffic', part_config='vehicles/simple_traffic/pessima_sport.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril Roamer V8 4WD LXT', model='simple_traffic', part_config='vehicles/simple_traffic/roamer_ext.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles ETK K-Series kc6x 360', model='simple_traffic', part_config='vehicles/simple_traffic/etkc_eu_kc6.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles ETK I-Series 2400', model='simple_traffic', part_config='vehicles/simple_traffic/etki_pre.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Ibishu BX-Series LX Coupe', model='simple_traffic', part_config='vehicles/simple_traffic/bx_sport_coupe.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles ETK I-Series 2400', model='simple_traffic', part_config='vehicles/simple_traffic/etki_eu_pre.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Ibishu Covet Driving School Car', model='simple_traffic', part_config='vehicles/simple_traffic/covet_drivingschool.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Lansdale SE AWD', model='simple_traffic', part_config='vehicles/simple_traffic/lansdale_pre_high.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Lansdale Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/lansdale_eu_facelift_base.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Bruckell Bastion Sport', model='simple_traffic', part_config='vehicles/simple_traffic/bastion_sport.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril Roamer V8 4WD LXT Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/roamer_ext_facelift.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles ETK 800-Series 150 Wagon', model='simple_traffic', part_config='vehicles/simple_traffic/etk800_base_wagon.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril D-Series Crew Cab Dually', model='simple_traffic', part_config='vehicles/simple_traffic/pickup_d35.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles ETK 800-Series 250 Sedan', model='simple_traffic', part_config='vehicles/simple_traffic/etk800_eu_high_sedan.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Hirochi Sunburst Sport RS-Aero Sedan', model='simple_traffic', part_config='vehicles/simple_traffic/sunburst2_sedan_aero.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Bruckell LeGran Sedan Regulier Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/legran_sedan_facelift_regulier.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Ibishu BX-Series LXz Hatchback', model='simple_traffic', part_config='vehicles/simple_traffic/bx_sport_hatch.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril Roamer V8 Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/roamer_base_facelift.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Ibishu BX-Series DX Coupe', model='simple_traffic', part_config='vehicles/simple_traffic/bx_base_coupe.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Hirochi Sunburst Base Sedan', model='simple_traffic', part_config='vehicles/simple_traffic/sunburst2_sedan_base.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Hirochi Sunburst Base Wagon', model='simple_traffic', part_config='vehicles/simple_traffic/sunburst2_wagon_base.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles ETK I-Series 2400i', model='simple_traffic', part_config='vehicles/simple_traffic/etki_facelift.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril H-Series XT Passenger', model='simple_traffic', part_config='vehicles/simple_traffic/van_passenger.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Bruckell LeGran Wagon Regulier Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/legran_wagon_facelift_regulier.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles ETK 800-Series 150 Sedan', model='simple_traffic', part_config='vehicles/simple_traffic/etk800_eu_base_sedan.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Ibishu Pessima (Old) Street Tuned', model='simple_traffic', part_config='vehicles/simple_traffic/pessima_tuner.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles ETK K-Series kc4 250', model='simple_traffic', part_config='vehicles/simple_traffic/etkc_eu_kc4.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Ibishu Covet LXi', model='simple_traffic', part_config='vehicles/simple_traffic/covet_high.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Bruckell LeGran Sedan S Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/legran_sedan_facelift_s.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril Roamer V8', model='simple_traffic', part_config='vehicles/simple_traffic/roamer_base.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril D-Series Cargo Box Upfit', model='simple_traffic', part_config='vehicles/simple_traffic/pickup_d45.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles ETK 800-Series 250 Sedan', model='simple_traffic', part_config='vehicles/simple_traffic/etk800_high_sedan.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Bruckell LeGran Sedan Luxe', model='simple_traffic', part_config='vehicles/simple_traffic/legran_sedan_pre_luxe.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Ibishu Pessima (New) DX', model='simple_traffic', part_config='vehicles/simple_traffic/midsize_dx.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Wendover SE 3800 Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/wendover_facelift_high.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Ibishu Pessima (New) LX', model='simple_traffic', part_config='vehicles/simple_traffic/midsize_lx.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Hirochi Sunburst Sport Wagon', model='simple_traffic', part_config='vehicles/simple_traffic/sunburst2_wagon_sport.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Hirochi Sunburst Base Wagon', model='simple_traffic', part_config='vehicles/simple_traffic/sunburst2_eu_wagon_base.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril Grand Marshal V8', model='simple_traffic', part_config='vehicles/simple_traffic/fullsize_stock.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Wendover 3300 Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/wendover_facelift_base.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Lansdale SE AWD', model='simple_traffic', part_config='vehicles/simple_traffic/lansdale_eu_pre_high.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril H-Series Cargo Box', model='simple_traffic', part_config='vehicles/simple_traffic/van_cargobox.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Hirochi Sunburst Sport RS Wagon', model='simple_traffic', part_config='vehicles/simple_traffic/sunburst2_eu_wagon_wide.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Hirochi Sunburst Base Sedan', model='simple_traffic', part_config='vehicles/simple_traffic/sunburst2_eu_sedan_base.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Lansdale S Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/lansdale_facelift_mid.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Cherrier Vivace E', model='simple_traffic', part_config='vehicles/simple_traffic/vivace_ev.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Hirochi Sunburst Sport RS-Aero Sedan', model='simple_traffic', part_config='vehicles/simple_traffic/sunburst2_eu_sedan_aero.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril H-Series XT Passenger Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/van_passenger_facelift.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles ETK 800-Series 150 Sedan', model='simple_traffic', part_config='vehicles/simple_traffic/etk800_base_sedan.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Bruckell LeGran Wagon S Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/legran_wagon_facelift_s.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles ETK 800-Series 250 Wagon', model='simple_traffic', part_config='vehicles/simple_traffic/etk800_high_wagon.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Ibishu Covet DXi', model='simple_traffic', part_config='vehicles/simple_traffic/covet_base.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Hirochi Sunburst Sport Sedan', model='simple_traffic', part_config='vehicles/simple_traffic/sunburst2_eu_sedan_sport.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Lansdale S', model='simple_traffic', part_config='vehicles/simple_traffic/lansdale_pre_mid.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Cherrier Tograc 110', model='simple_traffic', part_config='vehicles/simple_traffic/tograc_base.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Lansdale Cargo Van', model='simple_traffic', part_config='vehicles/simple_traffic/lansdale_pre_van.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Lansdale Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/lansdale_facelift_base.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Wendover S 3800', model='simple_traffic', part_config='vehicles/simple_traffic/wendover_pre_high.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Hirochi Sunburst Sport RS-Aero Wagon', model='simple_traffic', part_config='vehicles/simple_traffic/sunburst2_eu_wagon_aero.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Lansdale SE AWD Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/lansdale_eu_facelift_high.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Cherrier Vivace 160', model='simple_traffic', part_config='vehicles/simple_traffic/vivace_standard.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Lansdale SE AWD Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/lansdale_facelift_high.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Bruckell Bastion Base', model='simple_traffic', part_config='vehicles/simple_traffic/bastion_base.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril H-Series Vanster Rapid Delivery', model='simple_traffic', part_config='vehicles/simple_traffic/van_delivery.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Bruckell LeGran Wagon S', model='simple_traffic', part_config='vehicles/simple_traffic/legran_wagon_pre_s.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Gavril H-Series Vanster Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/van_vanster_facelift.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles ETK 800-Series xc Wagon', model='simple_traffic', part_config='vehicles/simple_traffic/etk800_xc.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Hirochi Sunburst Sport RS Wagon', model='simple_traffic', part_config='vehicles/simple_traffic/sunburst2_wagon_wide.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Lansdale', model='simple_traffic', part_config='vehicles/simple_traffic/lansdale_pre_base.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Bruckell LeGran Wagon SE Facelift', model='simple_traffic', part_config='vehicles/simple_traffic/legran_wagon_facelift_se.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Bruckell LeGran Wagon Regulier', model='simple_traffic', part_config='vehicles/simple_traffic/legran_wagon_pre_regulier.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Cherrier Vivace S 270', model='simple_traffic', part_config='vehicles/simple_traffic/vivace_wide.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles ETK 800-Series 150 Wagon', model='simple_traffic', part_config='vehicles/simple_traffic/etk800_eu_base_wagon.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Soliad Lansdale Taxi', model='simple_traffic', part_config='vehicles/simple_traffic/lansdale_pre_taxi.pc', licence='TRAFFIC'),
+    Vehicle('(Vehicle) Simplified Traffic Vehicles Bruckell Bastion Luxe', model='simple_traffic', part_config='vehicles/simple_traffic/bastion_luxe.pc', licence='TRAFFIC'),
+]
