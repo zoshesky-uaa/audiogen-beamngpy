@@ -13,10 +13,15 @@ class AudioRec:
         # Helper selection function
         def select_device(target_name):
             devices = sd.query_devices()
+            hostapis = sd.query_hostapis()
             for i, dev in enumerate(devices):
-                if target_name in dev['name'] and dev['max_input_channels'] > 0:
+                if target_name in dev['name'] and dev['max_input_channels'] == const.AUDIO_CHANNELS:
+                    dev.get('default_low_input_latency')
+                    hostapi_info = hostapis[dev['hostapi']]
+                    hostapi_name = hostapi_info.get('name', f"index {dev['hostapi']}")
+                    print(f"Selected input device '{dev['name']}' (Index {i})")
+                    print(f"  Host API: {hostapi_name} (index {dev['hostapi']})")
                     self.device = i
-                    print(f"Input audio device set to '{target_name}' (Index {i})")
                     return
             raise RuntimeError(f"Could not find device: {target_name}. Check your VoiceMeeter settings!")
         
@@ -31,6 +36,8 @@ class AudioRec:
                                          channels=const.AUDIO_CHANNELS,
                                          blocksize=int(const.SAMPLING_FREQUENCY / const.TICK_RATE)   ,
                                          device=self.device,
+                                         latency='low',
+                                         dtype='float32',
                                          callback=self._audio_callback)
             self.stream.start()
         except Exception as e:
