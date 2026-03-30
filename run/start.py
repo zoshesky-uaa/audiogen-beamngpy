@@ -33,9 +33,8 @@ class Simulation:
                 open_beamng(counter)
 
         open_beamng(0)
-        # A flag to state the simulation is on, used for dispatcher thread
+
         self.on = True
-        
         # Serializes calls for BeamNG, with a check for the simulation being on
         self.dispatcher = dispatcher.Dispatcher(lambda: self.on)
         self.dispatcher_thread = threading.Thread(target=self.dispatcher.run, daemon=True)
@@ -82,11 +81,13 @@ class Simulation:
         except Exception as e:  
             print(f"Failed to delete scenario {scenario_name}: {e}")  
 
+
+
     def scenario_setup(self, count, ai=True):
         # Environment choice
         self.environment = random.choices([west_coast_usa.builder()],
                                            weights=[1], k=1)[0]
-        
+
         # Scenario setup
         scenario_name = f'Scenario_{count}'  
         level_name = self.environment.name
@@ -97,23 +98,19 @@ class Simulation:
         self.vehicle_controller = vehicles.builder(simulation=self)
    
         # Intializes the scenario and adds driver vehicle to it
+        
         self.vehicle_controller.driver_presetup()
 
         # Initializes the scheduler and appends the driver to it
         self.event_schedular = scheduler.Scheduler(self) 
         self.event_schedular.append_event(0, ai=ai)
 
-
-
         #Send sync for blocking each step to ensure they're loaded in order
         self.dispatcher.send_sync(self.scenario.make, self.beamng)
         self.dispatcher.send_sync(self.beamng.scenario.load, self.scenario)
         self.dispatcher.send_sync(self.beamng.scenario.start)
         self.dispatcher.send_sync(self.beamng.control.pause)
-
-        # Sets the initial focus to the driver vehicle
-        self.vehicle_controller.camera_setup()
-        
+        self.event_schedular.transition_to_scenario()
         # Setups conditions for the scenario
         self.random_weather_setup()
         self.random_tod_setup()

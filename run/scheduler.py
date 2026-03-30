@@ -142,6 +142,21 @@ class Scheduler:
             case _: return   
         thread.start()  
 
+    def transition_to_scenario(self):
+        instruct = lambda : (
+            self.simulation.dispatcher.send_sync(self.simulation.beamng.queue_lua_command, "core_input_actionFilter.setGroup('all', true)"),
+            self.simulation.dispatcher.send_sync(self.simulation.beamng.queue_lua_command, "ui_fadeScreen.fadeToBlack(0.1)"),
+            self.simulation.dispatcher.send_sync(self.simulation.beamng.queue_lua_command, "SFXSystem.setGlobalParameter('g_FadeTimeMS', {1.0 * 1000})"),
+            self.simulation.dispatcher.send_sync(self.simulation.beamng.queue_lua_command, "SFXSystem.setGlobalParameter('g_GameLoading', 1)"),
+            self.tick.waited_action(),
+            self.simulation.dispatcher.send_sync(self.simulation.beamng.queue_lua_command, "core_input_actionFilter.setGroup('all', false)"),
+            self.simulation.dispatcher.send_sync(self.simulation.beamng.queue_lua_command, "ui_fadeScreen.fadeFromBlack(2.0)"),  
+            self.simulation.dispatcher.send_sync(self.simulation.beamng.queue_lua_command, "SFXSystem.setGlobalParameter('g_GameLoading', 0)"),
+        )  
+        thread = threading.Thread(target=instruct, daemon=True)
+        self.threads.append(thread)
+        thread.start()
+
     # Control flow function for the simulation
     def simulate(self):
         audio_data = None

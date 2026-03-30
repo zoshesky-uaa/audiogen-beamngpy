@@ -88,20 +88,6 @@ class builder:
         self.simulation.dispatcher.send_sync(self.simulation.scenario.add_vehicle, driver, pos=spawn[0], rot_quat=spawn[1], cling=True)
         return driver
     
-    def camera_setup(self):
-        def free_camera_hold(self):
-            # Get driver's current position  
-            self.driver.sensors.poll('state')  
-            driver_pos = self.driver.state['pos']  
-                
-            # Set free camera to driver's position (slightly above and behind)  
-            camera_pos = (driver_pos[0], driver_pos[1] - 5, driver_pos[2])  
-            direction = (0, 1, 0) 
-                
-            # Set free camera at driver's position   
-            self.simulation.beamng.camera.set_free(camera_pos, direction) 
-        self.simulation.dispatcher.send_sync(free_camera_hold, self)
-
     def switch_to_driver(self):
         self.simulation.dispatcher.send(self.simulation.beamng.vehicles.switch,self.driver)
 

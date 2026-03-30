@@ -16,20 +16,17 @@ class DriverRecorder:
         self.tick = tick
         self.simulation = simulation
         self.run(ai=ai)
+        self.speed_limit = 0.0
 
     def run(self, ai=True):
         # Delays until warmup is started
         self.tick.waited_action()
         # Forces simulation to switch current camera (including the audio listener) back to the driver, sort of a hack
         self.dispatcher.send_sync(self.simulation.vehicle_controller.switch_to_driver)
-        self.dispatcher.send_sync(self.simulation.beamng.camera.set_player_mode, 
-                                self.driver,
-                                "orbit",
-                                {"distance": 5})
         #Write a else case for this for manual control parameters in the future
         if ai:
             self.normal_behavior()
-        print("Driver connected.") 
+        print("Driver connected.")   
         
         # Attaches additional sensors to the driver vehicle for data collection per request
         # Trying to catch potential error conditions
@@ -90,7 +87,7 @@ class DriverRecorder:
                 damage = self.damage.get('damage', 0.0)  
 
                 road_data = self.roads_sensor.poll()  
-              
+
                 if isinstance(road_data, dict) and road_data:
                     latest_time = max(road_data.keys())  
                     latest_reading = road_data[latest_time]  
@@ -99,6 +96,7 @@ class DriverRecorder:
                     lane_left = latest_reading["dist2Left"] * 3.281  
                     lane_halfwidth = latest_reading["halfWidth"] * 3.281  
                     lane_data = (lane_center, lane_right, lane_left, lane_halfwidth)  
+                    speed_limit = road_data['speedLimit'] 
                 else:  
                     lane_data = (0.0, 0.0, 0.0, 0.0)
                     failed = True  
@@ -115,9 +113,14 @@ class DriverRecorder:
                     lane_data = (0.0, 0.0, 0.0, 0.0)
                 failed = True
 
-            return velocity, steering, braking, damage, lane_data, failed
+            return velocity, steering, braking, damage, lane_data, speed_limit, failed
 
-        velocity, steering, braking, damage, lane_data, failed = self.dispatcher.send_sync(_snapshot_driver_state)
+        velocity, steering, braking, damage, lane_data, speed_limit, failed = self.dispatcher.send_sync(_snapshot_driver_state)
+
         if not failed:
+            if self.speed_limit != speed_limit:
+                self.speed_limit = speed_limit
+                self.driver.ai.set_speed(speed_limit*2.237, mode="limit")
+                print(f"New speed limit: {self.speed_limit} mph")
             # Do something here
             pass
