@@ -22,12 +22,22 @@ def main():
             simulation.scenario_cleanup()
     except KeyboardInterrupt:
         print("\nInterrupted — shutting down...")
-        simulation.scenario_cleanup()
-        exit(0)
+        try:
+            simulation.scenario_cleanup()
+        except Exception as e:
+            print(f"Error during cleanup: {e}")
+    except Exception as e:
+        print(f"\nUnexpected error error: {e}")
+        try:
+            simulation.scenario_cleanup()
+        except Exception as cleanup_e:
+            print(f"Error during cleanup: {cleanup_e}")
     finally:
         print("Simulation ended.")
-        simulation.close()
-        exit(0)
+        try:
+            simulation.close()
+        except Exception as e:
+            print(f"Error closing simulation: {e}")
 
 
 if __name__ == "__main__":
