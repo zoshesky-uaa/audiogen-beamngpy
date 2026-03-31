@@ -3,6 +3,7 @@ import random
 import math
 from beamngpy import angle_to_quat 
 from time import sleep
+from beamngpy.sensors import Damage, RoadsSensor, Electrics, AdvancedIMU
 
 class builder:
     def __init__(self, simulation):
@@ -12,6 +13,7 @@ class builder:
         self.roads = None
         self.traffic_count = 0
         self.ev_count = 0
+        self.spawned_vehicles = []
     
     def get_road_network(self):
         road_network = self.simulation.dispatcher.send_sync(
@@ -75,7 +77,10 @@ class builder:
                 licence=template.options.get('licence')
             )
             self.traffic_count += 1
-        self.simulation.dispatcher.send(self.simulation.beamng.vehicles.spawn, vehicle, pos=spawn[0], rot_quat=spawn[1], cling=True, connect=False)
+        self.simulation.dispatcher.send_sync(self.simulation.beamng.vehicles.spawn, vehicle, pos=spawn[0], rot_quat=spawn[1], cling=True, connect=True)
+        
+        self.spawned_vehicles.append(vehicle)
+
         return vehicle
     
     def driver_presetup(self):
@@ -94,6 +99,24 @@ class builder:
     def random_EV(self):
         ev = random.choice(EV)
         return ev
+    
+    def register_driver_sensors(self):
+        self.driver_electrics = Electrics()
+        self.simulation.dispatcher.send_sync(self.driver.sensors.attach, "electrics", self.driver_electrics)
+        self.driver_damage = Damage()
+        self.simulation.dispatcher.send_sync(self.driver.sensors.attach, "damage", self.driver_damage)
+        self.driver_roads_sensor = self.simulation.dispatcher.send_sync(
+            RoadsSensor,
+            name="driver_roads_sensor",
+            bng=self.simulation.beamng,
+            vehicle=self.driver
+        )
+        self.driver_imu_sensor = self.simulation.dispatcher.send_sync(
+            AdvancedIMU,
+            name="driver_imu_sensor",
+            bng=self.simulation.beamng,
+            vehicle=self.driver
+        )
 
     def random_vehicle(self):
         return random.choice(NORMAL)

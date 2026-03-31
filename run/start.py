@@ -1,6 +1,6 @@
-from beamngpy import BeamNGpy, Scenario, Vehicle
+from beamngpy import BeamNGpy, Scenario
 from beamngpy.logging import BNGDisconnectedError
-from run import scheduler, dispatcher, driver
+from run import scheduler, dispatcher
 import threading
 from spawns import vehicles
 from time import sleep, time
@@ -16,7 +16,8 @@ class Simulation:
             host="localhost",        
             port=25252,           
             home=const.BEAMNG_LOCATION,
-            debug=True
+            debug=True,
+            gfx='dx11'
         )
 
         # Helper recursion check for BeamNG connection
@@ -36,7 +37,7 @@ class Simulation:
 
         self.on = True
         self.beamng.settings.set_nondeterministic()
-        #self.beamng.settings.set_deterministic(ceil(const.TICK_RATE*2))
+        #self.beamng.settings.set_deterministic(400)
         # Serializes calls for BeamNG, with a check for the simulation being on
         self.dispatcher = dispatcher.Dispatcher(lambda: self.on)
         self.dispatcher_thread = threading.Thread(target=self.dispatcher.run, daemon=True)
@@ -100,7 +101,6 @@ class Simulation:
         self.vehicle_controller = vehicles.builder(simulation=self)
    
         # Intializes the scenario and adds driver vehicle to it
-        
         self.vehicle_controller.driver_presetup()
 
         # Initializes the scheduler and appends the driver to it
@@ -110,14 +110,15 @@ class Simulation:
         #Send sync for blocking each step to ensure they're loaded in order
         self.dispatcher.send_sync(self.scenario.make, self.beamng)
         self.dispatcher.send_sync(self.beamng.scenario.load, self.scenario)
+        self.event_schedular.transition_to_scenario()
         self.dispatcher.send_sync(self.beamng.scenario.start)
         self.dispatcher.send_sync(self.beamng.control.pause)
-        self.event_schedular.transition_to_scenario()
         # Setups conditions for the scenario
         self.random_weather_setup()
         self.random_tod_setup()
         self.convert_to_imperial()
-
+        # Register all public accessible sensors for the driver for access throughout the simulation
+        self.vehicle_controller.register_driver_sensors()
         print("Scenario started.")
         
         # Gets the road network for the scenario for use in vehicle spawning
@@ -128,58 +129,47 @@ class Simulation:
 
     def simulation_traffic_setup(self):
         # Traffic API is problematic spawning method, so I have to do this manually now
-        n_amount = random.randint(const.MINIMUM_TRAFFIC_VEHICLES, const.MAXIMUM_TRAFFIC_VEHICLES)
+        n_traffic_rand = random.randint(const.MINIMUM_TRAFFIC_VEHICLES, const.MAXIMUM_TRAFFIC_VEHICLES)
         # Sets what vehicles can be controlled and given sound events within the maximum range
-        control_count =  n_amount % (const.MAXIMUM_CONTROLLABLE_VEHICLES + 1)
+        control_count =  (n_traffic_rand % const.MAXIMUM_CONTROLLABLE_VEHICLES) + 1
         # Used to add delays between spawns to help out the Lua GE
-        print("Number of traffic vehicles: " + str(n_amount) + ". Setting up traffic vehicles.")
-        for i in range(n_amount):
+        print("Number of traffic vehicles: " + str(n_traffic_rand) + ". Setting up traffic vehicles.")
+            
+        for i in range(n_traffic_rand):
             vehicle = self.vehicle_controller.vehicle_spawn(EV=False)
-            sleep(0.25)
-            try:
-                self.dispatcher.send_sync(vehicle.connect, self.beamng, tries=10)  
-                if control_count > 0:
-                    self.event_schedular.append_event(1, vehicle)  
-                    control_count -= 1  
-                    print(f"Traffic vehicle {vehicle.vid} successfully spawned and connected")  
-                else:  
-                    vehicle.ai.set_mode("traffic")
-                    print(f"Traffic vehicle {vehicle.vid} successfully spawned")   
-            except Exception as e:  
-                print(f"Traffic vehicle {vehicle.vid} failed to connect: {e}")
-                self.dispatcher.send(self.beamng.vehicles.despawn, vehicle)
-                continue
+            if control_count > 0:
+                self.event_schedular.append_event(1, vehicle)  
+                control_count -= 1  
+                print(f"Traffic vehicle {vehicle.vid} successfully spawned and connected")  
+            else:  
+                vehicle.ai.set_mode("traffic")
+                print(f"Traffic vehicle {vehicle.vid} successfully spawned")   
 
         # Spawns a random number of emergency vehicles based on the constants defined
         n_police_rand = random.randint(const.MINIMUM_EMERGENCY_VEHICLES, const.MAXIMUM_EMERGENCY_VEHICLES)
-        control_count =  n_police_rand % (const.MAXIMUM_CONTROLLABLE_VEHICLES + 1)
+        control_count =  (n_police_rand % const.MAXIMUM_CONTROLLABLE_VEHICLES) + 1
 
         print("Number of emergency vehicles: " + str(n_police_rand) + ". Setting up emergency vehicles.")
         for i in range(n_police_rand):
             # Custom spawn for specifically emergency vehicles
-            # Note: Finding a non-static spawning method for these emergency vehicles would be ideal
             vehicle = self.vehicle_controller.vehicle_spawn(EV=True)
-            try:
-                sleep(0.25)
-                self.dispatcher.send_sync(vehicle.connect, self.beamng, tries=10)
-                if control_count > 0:
-                    self.event_schedular.append_event(3, vehicle)
-                    control_count -= 1
-                    print(f"Emergency vehicle {vehicle.vid} successfully spawned and connected")
-                else:
-                    vehicle.ai.set_mode("traffic") 
-                    print(f"Emergency vehicle {vehicle.vid} successfully spawned") 
-            except Exception as e:
-                print(f"Emergency vehicle {vehicle.vid} failed to spawn or connect: {e}")
-                self.dispatcher.send(self.beamng.vehicles.despawn, vehicle)
-                continue
+            if control_count > 0:
+                self.event_schedular.append_event(3, vehicle)  
+                control_count -= 1  
+                print(f"Emergency vehicle {vehicle.vid} successfully spawned and connected")  
+            else:  
+                vehicle.ai.set_mode("traffic")
+                print(f"Emergency vehicle {vehicle.vid} successfully spawned")  
 
     # Stops all events, deletes the scenario, and despawns all vehicles if possible
-    def scenario_cleanup(self):    
-        if hasattr(self, 'event_schedular'):
+    def scenario_cleanup(self):
+        self.dispatcher.clear()    
+        if hasattr(self, 'event_schedular') and self.event_schedular is not None:
             self.event_schedular.stop_all()
             self.event_schedular = None
-        if hasattr(self, 'scenario'):
+        if hasattr(self, '_spawned_vehicles'):
+            self._spawned_vehicles.clear()
+        if hasattr(self, 'scenario') and self.scenario is not None:
             self.dispatcher.send_sync(self.beamng.scenario.stop)
             sleep(1.0)
             self.dispatcher.send_sync(self.scenario.delete, self.beamng)
@@ -187,8 +177,8 @@ class Simulation:
 
     # Closes the connection to BeamNG and stops the dispatcher thread that recieves the commands
     def close(self):
+        self.dispatcher.clear()
         self.dispatcher.send_sync(self.beamng.close)
-        sleep(5)
         self.on = False
         self.dispatcher_thread.join(timeout=10.0)
         

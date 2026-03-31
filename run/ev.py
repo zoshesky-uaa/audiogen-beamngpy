@@ -1,9 +1,8 @@
 import math
 import random
 import const
-from time import sleep
 import queue
-
+from beamngpy.sensors import AdvancedIMU
 """
 SoundEvent class to represent audio events in the simulation
 Class Events:
@@ -14,8 +13,7 @@ Class Events:
 
 class VehicleSoundEvent:
     def __init__(self,
-                 driver,
-                 dispatcher, 
+                 simulation, 
                  class_index, 
                  track_index, 
                  fsm,
@@ -28,9 +26,10 @@ class VehicleSoundEvent:
         # Catch for empty vehicles to let them send empty resets
         if vehicle is None:
             self.empty_action()
-
-        self.dispatcher = dispatcher
-        self.driver = driver
+            return
+        self.simulation = simulation
+        self.dispatcher = simulation.dispatcher
+        self.driver = simulation.vehicle_controller.driver
         self.vehicle = vehicle
         self.run()
  
@@ -40,9 +39,15 @@ class VehicleSoundEvent:
     def run(self):
         # Delays until warmup is started
         self.tick.waited_action(self.normal_behavior)
+        self.imu_sensor = self.dispatcher.send_sync(
+            AdvancedIMU,
+            name="imu_sensor_" + str(self.class_index) + "_" + str(self.track_index),
+            bng=self.simulation.beamng,
+            vehicle=self.vehicle
+        )       
         # Lambda to select either an empty event or sirent event, passed to waited_action_iterate
         action = lambda: random.choices([self.random_empty, self.random_siren_event],
-                                    weights=[0.80, 0.20], k=1)[0]()
+                                    weights=[0.50, 0.50], k=1)[0]()
         self.tick.waited_action_iterate(action)
 
     def normal_behavior(self):
@@ -90,7 +95,6 @@ class VehicleSoundEvent:
         while self.tick.frame_index < event_end_frame and not self.tick.shutdown.is_set():
             if action is not None:
                 action()
-            sleep(const.TICK_DURATION_SECONDS/2)
 
     def random_empty(self):
         self.normal_behavior()
@@ -101,24 +105,22 @@ class VehicleSoundEvent:
         self.write_reset()
         self.tick.waited_action_iterate(max_frame=event_end_frame)
 
-    def position_data(self, relative=False):
-        if not self.vehicle.is_connected():  
-            print("Vehicle disconnected - attempting reconnection")  
-            try:  
-                self.vehicle.connect(self.simulation.beamng)  
-            except Exception as e:  
-                print(f"Reconnection failed: {e}")  
-                return  
-            
+    def position_data(self, relative=False):   
         def _snapshot_positions():
             try:  
                 failed = False
-                self.driver.sensors.poll('state') 
-                self.vehicle.sensors.poll('state') 
-                driver_state = self.driver.state if isinstance(self.driver.state, dict) else {}
-                vehicle_state = self.vehicle.state if isinstance(self.vehicle.state, dict) else {}
-                origin_position = driver_state.get('pos', (0.0, 0.0, 0.0))
-                sound_position = vehicle_state.get('pos', (0.0, 0.0, 0.0))
+                vehicle_imu_data = self.imu_sensor.poll()
+                driver_imu_data = self.vehicle_controller.driver_imu_sensor.poll()
+                if isinstance(vehicle_imu_data, dict) and vehicle_imu_data:
+                    sound_position = vehicle_imu_data['pos']
+                else:
+                    sound_position = (0.0, 0.0, 0.0)
+                    failed = True
+                if isinstance(driver_imu_data, dict) and driver_imu_data:
+                    origin_position = driver_imu_data['pos']
+                else:                    
+                    origin_position = (0.0, 0.0, 0.0)
+                    failed = True
             except:
                 print("Error occurred while snapshotting EV positions.")
                 origin_position = (0.0, 0.0, 0.0)
@@ -126,8 +128,11 @@ class VehicleSoundEvent:
                 failed = True
             return origin_position, sound_position, failed
         
-        origin_position, sound_position, failed = self.dispatcher.send_sync(_snapshot_positions)
-        
+        try:
+             origin_position, sound_position, failed = self.dispatcher.send_sync(_snapshot_positions, timeout=const.TICK_DURATION_SECONDS/1.5)
+        except TimeoutError:
+            failed = True
+
         if not failed:
             dx = origin_position[0] - sound_position[0]
             dy = origin_position[1] - sound_position[1]
@@ -147,24 +152,31 @@ class VehicleSoundEvent:
         def _snapshot_following():
             try:  
                 failed = False
-                self.driver.sensors.poll('state') 
-                self.vehicle.sensors.poll('state') 
-                follower_state = self.driver.state if isinstance(self.driver.state, dict) else {}
-                followed_state = self.vehicle.state if isinstance(self.vehicle.state, dict) else {}
-                follower_pos = follower_state.get('pos', (0.0, 0.0, 0.0))
-                followed_pos = followed_state.get('pos', (0.0, 0.0, 0.0))
-                followed_vel = followed_state.get('vel', (0.0, 0.0, 0.0))
+                vehicle_imu_data =self.imu_sensor.poll()
+                driver_imu_data = self.vehicle_controller.driver_imu_sensor.poll()
+                if isinstance(vehicle_imu_data, dict) and vehicle_imu_data:
+                    follower_pos = vehicle_imu_data['pos']
+                else:
+                    follower_pos = (0.0, 0.0, 0.0)
+                    failed = True
+                if isinstance(driver_imu_data, dict) and driver_imu_data:
+                    followed_pos = driver_imu_data['pos']
+                else:                    
+                    followed_pos = (0.0, 0.0, 0.0)
+                    failed = True
                 
             except:
                 print("Error occurred while snapshotting EV positions.")
                 follower_pos = (0.0, 0.0, 0.0)
                 followed_pos = (0.0, 0.0, 0.0)
-                followed_vel = (0.0, 0.0, 0.0)
                 failed = True
-            return follower_pos, followed_pos, followed_vel,  failed
+            return follower_pos, followed_pos, failed
         
-        follower_pos, followed_pos, followed_vel, failed = self.dispatcher.send_sync(_snapshot_following)
-       
+        try:
+            follower_pos, followed_pos, failed = self.dispatcher.send_sync(_snapshot_following, timeout=const.TICK_DURATION_SECONDS/1.5)
+        except TimeoutError:
+            failed = True
+
         if not failed:
             wp1 = {  
                 'x': follower_pos[0],  
@@ -174,9 +186,9 @@ class VehicleSoundEvent:
             }  
 
             wp2 = {  
-                'x': followed_pos[0]+followed_vel[0],  
-                'y': followed_pos[1]+followed_vel[1],   
-                'z': followed_pos[2]+followed_vel[2],  
+                'x': followed_pos[0],  
+                'y': followed_pos[1],   
+                'z': followed_pos[2],  
                 't': (const.TICK_DURATION_SECONDS*end_frame- self.tick.frame_index*const.TICK_DURATION_SECONDS)  
             }
 

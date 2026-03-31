@@ -11,8 +11,7 @@ Class Events:
 
 class VehicleSoundEvent:
     def __init__(self,
-                 driver,
-                 dispatcher, 
+                 simulation, 
                  class_index, 
                  track_index,  
                  fsm, 
@@ -25,9 +24,10 @@ class VehicleSoundEvent:
         # Catch for empty vehicles to let them send empty resets
         if vehicle is None:
             self.empty_action()
-
-        self.dispatcher = dispatcher
-        self.driver = driver
+            return
+        self.simulation = simulation
+        self.dispatcher = simulation.dispatcher
+        self.driver = simulation.vehicle_controller.driver
         self.vehicle = vehicle
         self.run()
  
