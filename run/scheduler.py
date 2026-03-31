@@ -144,14 +144,14 @@ class Scheduler:
 
     def transition_to_scenario(self):
         instruct = lambda : (
-            self.simulation.dispatcher.send_sync(self.simulation.beamng.queue_lua_command, "core_input_actionFilter.setGroup('all', true)"),
-            self.simulation.dispatcher.send_sync(self.simulation.beamng.queue_lua_command, "ui_fadeScreen.fadeToBlack(0.1)"),
+            self.simulation.dispatcher.send(self.simulation.beamng.queue_lua_command, "core_input_actionFilter.setGroup('all', true)"),
+            self.simulation.dispatcher.send(self.simulation.beamng.queue_lua_command, "ui_fadeScreen.fadeToBlack(0.5)"),
             self.simulation.dispatcher.send_sync(self.simulation.beamng.queue_lua_command, "SFXSystem.setGlobalParameter('g_FadeTimeMS', {1.0 * 1000})"),
             self.simulation.dispatcher.send_sync(self.simulation.beamng.queue_lua_command, "SFXSystem.setGlobalParameter('g_GameLoading', 1)"),
             self.tick.waited_action(),
-            self.simulation.dispatcher.send_sync(self.simulation.beamng.queue_lua_command, "core_input_actionFilter.setGroup('all', false)"),
-            self.simulation.dispatcher.send_sync(self.simulation.beamng.queue_lua_command, "ui_fadeScreen.fadeFromBlack(2.0)"),  
-            self.simulation.dispatcher.send_sync(self.simulation.beamng.queue_lua_command, "SFXSystem.setGlobalParameter('g_GameLoading', 0)"),
+            self.simulation.dispatcher.send(self.simulation.beamng.queue_lua_command, "SFXSystem.setGlobalParameter('g_GameLoading', 0)"),
+            self.simulation.dispatcher.send(self.simulation.beamng.queue_lua_command, "ui_fadeScreen.fadeFromBlack(0.5)"),  
+            self.simulation.dispatcher.send(self.simulation.beamng.queue_lua_command, "core_input_actionFilter.setGroup('all', false)"),
         )  
         thread = threading.Thread(target=instruct, daemon=True)
         self.threads.append(thread)
@@ -161,9 +161,9 @@ class Scheduler:
     def simulate(self):
         audio_data = None
         self.simulation.dispatcher.send(self.simulation.beamng.control.resume)
-        # Does a warmup for 15 seconds to ensure recordings don't start at a zero state
+        # Does a warmup for 20 seconds to ensure recordings don't start at a zero state
         print("Warming up scenario...")
-        self.tick.start(15*const.TICK_RATE)
+        self.tick.start(20*const.TICK_RATE)
         self.tick.reset()
 
         # Main scenario loop, starts audio recording and FSM writing

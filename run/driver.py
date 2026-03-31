@@ -99,6 +99,7 @@ class DriverRecorder:
                     speed_limit = road_data['speedLimit'] 
                 else:  
                     lane_data = (0.0, 0.0, 0.0, 0.0)
+                    speed_limit = 0.0
                     failed = True  
             except BaseException as e:  
                 if 'velocity' not in locals():
@@ -111,6 +112,8 @@ class DriverRecorder:
                     damage = 0.0
                 if 'lane_data' not in locals():
                     lane_data = (0.0, 0.0, 0.0, 0.0)
+                if 'speed_limit' not in locals():
+                    speed_limit = 0.0
                 failed = True
 
             return velocity, steering, braking, damage, lane_data, speed_limit, failed
@@ -118,7 +121,7 @@ class DriverRecorder:
         velocity, steering, braking, damage, lane_data, speed_limit, failed = self.dispatcher.send_sync(_snapshot_driver_state)
 
         if not failed:
-            if self.speed_limit != speed_limit:
+            if (self.speed_limit != speed_limit) and (speed_limit > 0):
                 self.speed_limit = speed_limit
                 self.driver.ai.set_speed(speed_limit*2.237, mode="limit")
                 print(f"New speed limit: {self.speed_limit} mph")

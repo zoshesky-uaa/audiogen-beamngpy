@@ -35,6 +35,8 @@ class Simulation:
         open_beamng(0)
 
         self.on = True
+        self.beamng.settings.set_nondeterministic()
+        #self.beamng.settings.set_deterministic(ceil(const.TICK_RATE*2))
         # Serializes calls for BeamNG, with a check for the simulation being on
         self.dispatcher = dispatcher.Dispatcher(lambda: self.on)
         self.dispatcher_thread = threading.Thread(target=self.dispatcher.run, daemon=True)
@@ -116,7 +118,6 @@ class Simulation:
         self.random_tod_setup()
         self.convert_to_imperial()
 
-        self.beamng.settings.set_deterministic(ceil(const.TICK_RATE*2))
         print("Scenario started.")
         
         # Gets the road network for the scenario for use in vehicle spawning
