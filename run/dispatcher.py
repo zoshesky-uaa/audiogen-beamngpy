@@ -34,11 +34,16 @@ class Dispatcher:
     def send(self, fn, *args, **kwargs):
         self.dispatchqueue.put(EventMsg(fn, args, kwargs))
 
-    def send_sync(self, fn, *args, timeout: Optional[float] = None, **kwargs):
-        # Blocking return that waits for results, use for retrival from beamng using the dispatcher
+    def send_sync(self, fn, *args, timeout: float = 60.0, **kwargs):
+        # Increased default timeout to 60s because BeamNG loading commands (like scenario.make) can take a very long time
         fut = concurrent.futures.Future()
         self.dispatchqueue.put(EventMsg(fn, args, kwargs, future=fut))
-        return fut.result(timeout=timeout)
+        try:
+            return fut.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            func_name = getattr(fn, '__name__', str(fn))
+            print(f"[Dispatcher Error] timeout waiting for {func_name} after {timeout}s")
+            raise TimeoutError(f"Dispatcher command '{func_name}' timed out.")
 
     def run(self):
         while self.simulation_check():
@@ -53,3 +58,13 @@ class Dispatcher:
                     self.dispatchqueue.task_done()
             except queue.Empty:
                 continue
+    
+    def clear(self):
+        while not self.dispatchqueue.empty():
+            try:
+                msg = self.dispatchqueue.get_nowait()
+                if hasattr(msg, "future") and msg.future is not None:
+                    msg.future.set_exception(RuntimeError("Task cancelled during cleanup"))
+                self.dispatchqueue.task_done()
+            except queue.Empty:
+                break

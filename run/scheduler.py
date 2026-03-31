@@ -107,30 +107,26 @@ class Scheduler:
         match class_index:
             case 0:
                 thread = threading.Thread(target=driver.DriverRecorder, 
-                                          args=(self.simulation.vehicle_controller.driver,
-                                                self.simulation.dispatcher,
-                                                self.fsm, 
-                                                self.tick,
-                                                self.simulation,
-                                                ai), 
+                                            args=(self.fsm, 
+                                            self.tick,
+                                            self.simulation,
+                                            ai), 
                                           daemon=True)
                 self.threads.append(thread)
             case 1:
                 thread = threading.Thread(target=traffic.VehicleSoundEvent, 
-                                args=(self.simulation.vehicle_controller.driver,
-                                                self.simulation.dispatcher,
-                                                class_index,
-                                                self.class_events.count(1),
-                                                self.fsm,
-                                                vehicle, 
-                                                self.tick), 
+                                            args=(self.simulation,
+                                            class_index,
+                                            self.class_events.count(1),
+                                            self.fsm,
+                                            vehicle, 
+                                            self.tick), 
                                           daemon=True)
                 self.class_events.append(class_index)
                 self.threads.append(thread)
             case 3:
                 thread = threading.Thread(target=ev.VehicleSoundEvent, 
-                                        args=(self.simulation.vehicle_controller.driver,
-                                            self.simulation.dispatcher,
+                                            args=(self.simulation,
                                             class_index,
                                             self.class_events.count(3),
                                             self.fsm,

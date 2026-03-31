@@ -37,6 +37,7 @@ class FSM:
                 except ValueError:
                     pass
         next_trial_name = f"trial_{highest_num + 1}"
+        print(f"Writing to folder: {next_trial_name}")
         new_trial_path = base_path / next_trial_name
         new_trial_path.mkdir()
 
