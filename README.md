@@ -4,7 +4,8 @@ https://github.com/PortAudio/portaudio/wiki/Win32AudioBackgroundInfo
 * Voicemeter Input = Voicemeter Out B1
 
 ## Bugs:
-1) Default state senors don't have a fast enough poll rate to supply the writer with fresh positions and velocities. Possibly the electric and damage sensor are equally unreliable and we might need to seperate that logic entirely. Need to re-work these sensors entirely.
+1) It appears a crash still occurs, seperate from polling operations. It always occurs whilst its unpaused and running the simulation. I'll leaving polling commented out so its not being done. Not sure if its related to non-deterministic stepping or some other effect, will check that next.
+
 
 ## Current Objectives:
 1) Procesing the poll data from `driver.py` into the respective data type information required, then write it to a zarr file. 
