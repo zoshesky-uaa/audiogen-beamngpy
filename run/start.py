@@ -96,29 +96,25 @@ class Simulation:
         level_name = self.environment.name
         self.scenario = Scenario(level_name, scenario_name) 
         self.clean_scenario_startup(scenario_name, level_name)
-   
+
         # Intializes the vehicle controller, which handles location spawns based on the environment
         self.vehicle_controller = vehicles.builder(simulation=self)
-   
+    
+        # Initializes the scheduler 
+        self.event_scheduler = scheduler.Scheduler(self) 
         # Intializes the scenario and adds driver vehicle to it
-        self.vehicle_controller.driver_presetup()
-
-        # Initializes the scheduler and appends the driver to it
-        self.event_schedular = scheduler.Scheduler(self) 
-        self.event_schedular.append_event(0, ai=ai)
+        self.vehicle_controller.driver_presetup(ai=ai) 
 
         #Send sync for blocking each step to ensure they're loaded in order
         self.dispatcher.send_sync(self.scenario.make, self.beamng)
         self.dispatcher.send_sync(self.beamng.scenario.load, self.scenario)
-        self.event_schedular.transition_to_scenario()
+        self.event_scheduler.transition_to_scenario()
         self.dispatcher.send_sync(self.beamng.scenario.start)
         self.dispatcher.send_sync(self.beamng.control.pause)
         # Setups conditions for the scenario
         self.random_weather_setup()
         self.random_tod_setup()
         self.convert_to_imperial()
-        # Register all public accessible sensors for the driver for access throughout the simulation
-        self.vehicle_controller.register_driver_sensors()
         print("Scenario started.")
         
         # Gets the road network for the scenario for use in vehicle spawning
@@ -136,14 +132,14 @@ class Simulation:
         print("Number of traffic vehicles: " + str(n_traffic_rand) + ". Setting up traffic vehicles.")
             
         for i in range(n_traffic_rand):
-            vehicle = self.vehicle_controller.vehicle_spawn(EV=False)
             if control_count > 0:
-                self.event_schedular.append_event(1, vehicle)  
+                vehicle_ref = self.vehicle_controller.vehicle_spawn(EV=False, control=True)
+                self.event_scheduler.append_event(0, vehicle_ref)  
                 control_count -= 1  
-                print(f"Traffic vehicle {vehicle.vid} successfully spawned and connected")  
-            else:  
-                vehicle.ai.set_mode("traffic")
-                print(f"Traffic vehicle {vehicle.vid} successfully spawned")   
+            else: 
+                vehicle_ref = self.vehicle_controller.vehicle_spawn(EV=False, control=False) 
+                vehicle_ref.vehicle.ai.set_mode("traffic")
+            print(f"Traffic vehicle {vehicle_ref.vid} successfully spawned")   
 
         # Spawns a random number of emergency vehicles based on the constants defined
         n_police_rand = random.randint(const.MINIMUM_EMERGENCY_VEHICLES, const.MAXIMUM_EMERGENCY_VEHICLES)
@@ -152,21 +148,21 @@ class Simulation:
         print("Number of emergency vehicles: " + str(n_police_rand) + ". Setting up emergency vehicles.")
         for i in range(n_police_rand):
             # Custom spawn for specifically emergency vehicles
-            vehicle = self.vehicle_controller.vehicle_spawn(EV=True)
             if control_count > 0:
-                self.event_schedular.append_event(3, vehicle)  
+                vehicle_ref = self.vehicle_controller.vehicle_spawn(EV=True, control=True)
+                self.event_scheduler.append_event(1, vehicle_ref)  
                 control_count -= 1  
-                print(f"Emergency vehicle {vehicle.vid} successfully spawned and connected")  
             else:  
-                vehicle.ai.set_mode("traffic")
-                print(f"Emergency vehicle {vehicle.vid} successfully spawned")  
+                vehicle_ref = self.vehicle_controller.vehicle_spawn(EV=True, control=False)
+                vehicle_ref.vehicle.ai.set_mode("traffic")
+            print(f"Emergency vehicle {vehicle_ref.vid} successfully spawned")  
 
     # Stops all events, deletes the scenario, and despawns all vehicles if possible
     def scenario_cleanup(self):
         self.dispatcher.clear()    
-        if hasattr(self, 'event_schedular') and self.event_schedular is not None:
-            self.event_schedular.stop_all()
-            self.event_schedular = None
+        if hasattr(self, 'event_scheduler') and self.event_scheduler is not None:
+            self.event_scheduler.stop_all()
+            self.event_scheduler = None
         if hasattr(self, '_spawned_vehicles'):
             self._spawned_vehicles.clear()
         if hasattr(self, 'scenario') and self.scenario is not None:

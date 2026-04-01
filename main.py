@@ -16,7 +16,7 @@ def main():
             simulation.scenario_setup((i+1), ai=TRAINING)    
 
             print(f"Running Scenario {i+1}...")
-            simulation.event_schedular.simulate()
+            simulation.event_scheduler.simulate()
 
             print(f"Cleaning up Scenario {i+1}...")
             simulation.scenario_cleanup()

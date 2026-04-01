@@ -2,18 +2,18 @@ from beamngpy import Vehicle
 import random
 import math
 from beamngpy import angle_to_quat 
-from time import sleep
-from beamngpy.sensors import Damage, RoadsSensor, Electrics, AdvancedIMU
+from beamngpy.sensors import Damage, RoadsSensor, Electrics
+from collections import namedtuple
+import threading
 
 class builder:
     def __init__(self, simulation):
         self.name = None
         self.simulation = simulation
-        self.driver = None
+        self.driver_ref = None
         self.roads = None
         self.traffic_count = 0
         self.ev_count = 0
-        self.spawned_vehicles = []
     
     def get_road_network(self):
         road_network = self.simulation.dispatcher.send_sync(
@@ -57,7 +57,7 @@ class builder:
         return pos, rot_quat
 
     
-    def vehicle_spawn(self, EV=False):
+    def vehicle_spawn(self, EV=False, control=False):
         spawn = self.road_random_spawn()
         if EV:
             template = self.random_EV()
@@ -78,55 +78,89 @@ class builder:
             )
             self.traffic_count += 1
         self.simulation.dispatcher.send_sync(self.simulation.beamng.vehicles.spawn, vehicle, pos=spawn[0], rot_quat=spawn[1], cling=True, connect=True)
-        
-        self.spawned_vehicles.append(vehicle)
-
-        return vehicle
+        veh_ref = Vehicle_Reference(vehicle, self.simulation.event_scheduler.vehicle_update_tick, self.simulation.beamng, control)
+        return veh_ref
     
-    def driver_presetup(self):
+    def driver_presetup(self, ai=True):
         # Driver must have a position before the scenario is loaded and loaded before scenario is made,
         # So therefore I had to extract random positions, getting a better list is ideal
         spawn = self.simulation.environment.random_location()
         driver = self.random_vehicle()
         # Store the driver reference
-        self.driver = driver  
         self.simulation.dispatcher.send_sync(self.simulation.scenario.add_vehicle, driver, pos=spawn[0], rot_quat=spawn[1], cling=True)
-        return driver
-    
+        self.driver_ref = Vehicle_Reference(driver, self.simulation.event_scheduler.vehicle_update_tick, self.simulation.beamng, control=True, driver=True)
+        self.simulation.event_scheduler.append_event(99, ai=ai)
+
     def switch_to_driver(self):
-        self.simulation.dispatcher.send(self.simulation.beamng.vehicles.switch,self.driver)
+        self.simulation.dispatcher.send(self.simulation.beamng.vehicles.switch, self.driver_ref.vehicle)
 
     def random_EV(self):
-        ev = random.choice(EV)
-        return ev
-    
-    def register_driver_sensors(self):
-        self.driver_electrics = Electrics()
-        self.simulation.dispatcher.send_sync(self.driver.sensors.attach, "electrics", self.driver_electrics)
-        self.driver_damage = Damage()
-        self.simulation.dispatcher.send_sync(self.driver.sensors.attach, "damage", self.driver_damage)
-        self.driver_roads_sensor = self.simulation.dispatcher.send_sync(
-            RoadsSensor,
-            name="driver_roads_sensor",
-            bng=self.simulation.beamng,
-            vehicle=self.driver
-        )
-        self.driver_imu_sensor = self.simulation.dispatcher.send_sync(
-            AdvancedIMU,
-            name="driver_imu_sensor",
-            bng=self.simulation.beamng,
-            vehicle=self.driver
-        )
+        return random.choice(EV)
 
     def random_vehicle(self):
         return random.choice(NORMAL)
     
     def random_traffic(self):
-        traffic = random.choice(OTHER)
-        return traffic
+        return random.choice(OTHER)
 
+VehicleState = namedtuple('VehicleState', ['position', 'velocity', 'steering', 'braking', 'damage', 'lane_data'])
+class Vehicle_Reference:
+    def __init__(self, vehicle, tick, beamng, control=False, driver=False):
+        self.vehicle = vehicle
+        self.tick = tick
+        self.beamng = beamng
+        self.vid = vehicle.vid
+        if control:
+            if driver:
+                print(f"Driver vehicle {self.vid} intialized")  
+                self.state = VehicleState((0.0,0.0,0.0), (0.0,0.0,0.0), 0.0, 0.0, 0.0, (0.0,0.0,0.0,0.0))
+                thread = threading.Thread(target=self.driver_run, daemon=True)
+                thread.start()
+            else:
+                print(f"Sound event vehicle {self.vid} intialized")  
+                self.state = VehicleState((0.0,0.0,0.0), (0.0,0.0,0.0), 0.0, 0.0, 0.0, (0.0,0.0,0.0,0.0))
+                thread = threading.Thread(target=self.run, daemon=True)
+                thread.start()
 
-    
+    def run(self):
+        self.tick.waited_action()
+        self.tick.waited_action_iterate(self.update)
+
+    def driver_run(self):
+        self.tick.waited_action()
+        self.electrics = Electrics()
+        self.vehicle.sensors.attach("electrics", self.electrics)
+        self.damage = Damage()
+        self.vehicle.sensors.attach("damage", self.damage)
+        self.roads_sensor = RoadsSensor(name="roads_sensor", bng=self.beamng, vehicle=self.vehicle)        
+        self.tick.waited_action_iterate(self.update)
+
+    def update(self):
+        if hasattr(self, 'electrics') and hasattr(self, 'damage') and hasattr(self, 'roads_sensor'):
+            self.vehicle.sensors.poll('state','electrics', 'damage')
+            position = self.vehicle.state['pos']
+            velocity = self.vehicle.state['vel']
+            steering = self.electrics['steering']
+            braking = self.electrics['brake']
+            damage = self.damage['damage']
+            road_data = self.roads_sensor.poll()
+            if isinstance(road_data, dict) and road_data:
+                latest_time = max(road_data.keys())  
+                latest_reading = road_data[latest_time]  
+                lane_center = latest_reading["dist2CL"] * 3.281  
+                lane_right = latest_reading["dist2Right"] * 3.281    
+                lane_left = latest_reading["dist2Left"] * 3.281  
+                lane_halfwidth = latest_reading["halfWidth"] * 3.281  
+                lane_data = (lane_center, lane_right, lane_left, lane_halfwidth)  
+            else:
+                lane_data = (0.0, 0.0, 0.0, 0.0)
+            self.state = VehicleState(position, velocity, steering, braking, damage, lane_data)
+        else:
+            self.vehicle.sensors.poll('state')
+            position = self.vehicle.state['pos']
+            velocity = self.vehicle.state['vel']
+            self.state = VehicleState(position, velocity, 0.0, 0.0, 0.0, (0.0, 0.0, 0.0, 0.0))
+
 EV = [
     Vehicle('(Vehicle) Wydra Rescue (CVT)', model='atv', part_config='vehicles/atv/rescue.pc', licence='EV'),
     Vehicle('(Vehicle) Bolide 350 Polizia (M)', model='bolide', part_config='vehicles/bolide/polizia.pc', licence='EV'),

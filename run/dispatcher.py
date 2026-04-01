@@ -2,7 +2,8 @@ from dataclasses import dataclass, field
 from typing import Callable, Any, Optional
 import queue
 import concurrent.futures
-import traceback    
+import const
+import traceback
 
 # Dispatch class that serialize access to BeamNG API, most of their classes are thread-safe but this is a simple precaution.
 @dataclass
@@ -58,7 +59,7 @@ class Dispatcher:
                     self.dispatchqueue.task_done()
             except queue.Empty:
                 continue
-    
+
     def clear(self):
         while not self.dispatchqueue.empty():
             try:
