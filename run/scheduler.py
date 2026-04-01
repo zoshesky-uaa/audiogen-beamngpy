@@ -163,8 +163,10 @@ class Scheduler:
         self.simulation.dispatcher.send(self.simulation.beamng.control.resume)
         # Does a warmup for 20 seconds to ensure recordings don't start at a zero state
         print("Warming up scenario...")
+        thread = threading.Thread(target=(lambda: self.vehicle_update_tick.start(2*const.TOTAL_FRAMES)), daemon=True)
+        self.threads.append(thread)
+        thread.start()
         self.tick.start(20*const.TICK_RATE)
-        self.vehicle_update_tick.start(2*const.TOTAL_FRAMES)
         self.tick.reset()
 
         # Main scenario loop, starts audio recording and FSM writing

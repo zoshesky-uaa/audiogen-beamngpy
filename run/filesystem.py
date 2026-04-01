@@ -52,9 +52,9 @@ class FSM:
         training_root = zarr.group(new_trial_path / "training_data.zarr")
         label_set = training_root.create_array(
             name="labels",
-            shape=(const.TOTAL_FRAMES+1, (const.MAXIMUM_VEHICLES), 4),
+            shape=(const.TOTAL_FRAMES+1, const.NUMBER_OF_SOUND_CLASSES, const.MAXIMUM_CONTROLLABLE_VEHICLES, 3),
             dtype="f4",
-            chunks=(const.CHUNK_SIZE, const.MAXIMUM_VEHICLES, 4),
+            chunks=(const.CHUNK_SIZE, const.NUMBER_OF_SOUND_CLASSES, const.MAXIMUM_CONTROLLABLE_VEHICLES, 3),
             compressors=compressor
         )
 
@@ -99,6 +99,7 @@ class ZarrWriter(threading.Thread):
         self.label_set = label_set
         self.labelqueue = labelqueue
         self.featurequeue = featurequeue
+        print("ZarrWriter initialized.")
         self.feature_buffer = np.zeros((const.CHUNK_SIZE, const.N_INPUTS, const.N_BINS), dtype="f4")
         self.label_buffer = np.zeros((const.CHUNK_SIZE, const.NUMBER_OF_SOUND_CLASSES, const.MAXIMUM_CONTROLLABLE_VEHICLES, 3), dtype="f4")
         self.next_flush_frame = const.CHUNK_SIZE

@@ -124,7 +124,7 @@ class Vehicle_Reference:
 
     def run(self):
         self.tick.waited_action()
-        self.tick.waited_action_iterate(self.update)
+        #self.tick.waited_action_iterate(self.update)
 
     def driver_run(self):
         self.tick.waited_action()
@@ -133,7 +133,7 @@ class Vehicle_Reference:
         self.damage = Damage()
         self.vehicle.sensors.attach("damage", self.damage)
         self.roads_sensor = RoadsSensor(name="roads_sensor", bng=self.beamng, vehicle=self.vehicle)        
-        self.tick.waited_action_iterate(self.update)
+        #self.tick.waited_action_iterate(self.update)
 
     def update(self):
         if hasattr(self, 'electrics') and hasattr(self, 'damage') and hasattr(self, 'roads_sensor'):
