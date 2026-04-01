@@ -114,11 +114,6 @@ class FFTCompute(threading.Thread):
                 #shape: (7 = const.N_INPUTS, bins) -> 4 amplitude channels + 3 relative phase differences
                 combined_features = np.concatenate([amp_norm, phase_norm], axis=0)
                 msg = (self.tick.frame_index, combined_features)
-                try:
-                    self.featurequeue.put_nowait(msg)
-                except queue.Full:
-                    _ = self.featurequeue.get_nowait()
-                    self.featurequeue.task_done()
-                    self.featurequeue.put_nowait(msg)
+                self.featurequeue.append(msg)
             except queue.Empty:
                 pass

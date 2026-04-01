@@ -93,6 +93,7 @@ class Scheduler:
     def __init__(self, simulation):
         # Intializes the tick with a finite delay constant defined
         self.tick = Tick(delay=const.TICK_DURATION_SECONDS)
+        self.vehicle_update_tick = Tick(delay=const.TICK_DURATION_SECONDS/2)
         # Intiales the FSM class that holds the writing functions for datasets
         self.fsm = filesystem.FSM(self.tick)  
         # Reference to main simulation  
@@ -103,34 +104,37 @@ class Scheduler:
         self.class_events = []
 
     # Creats an event thread based on the class index
-    def append_event(self, class_index, vehicle=None, ai=True):
+    def append_event(self, class_index, vehicle_ref=None, ai=True):
         match class_index:
-            case 0:
+            case 99:
                 thread = threading.Thread(target=driver.DriverRecorder, 
                                             args=(self.fsm, 
-                                            self.tick,
                                             self.simulation,
+                                            self.vehicle_update_tick,
+                                            self.tick,
                                             ai), 
                                           daemon=True)
                 self.threads.append(thread)
-            case 1:
+            case 0:
                 thread = threading.Thread(target=traffic.VehicleSoundEvent, 
                                             args=(self.simulation,
                                             class_index,
                                             self.class_events.count(1),
                                             self.fsm,
-                                            vehicle, 
+                                            vehicle_ref, 
+                                            self.vehicle_update_tick,
                                             self.tick), 
                                           daemon=True)
                 self.class_events.append(class_index)
                 self.threads.append(thread)
-            case 3:
+            case 1:
                 thread = threading.Thread(target=ev.VehicleSoundEvent, 
                                             args=(self.simulation,
                                             class_index,
-                                            self.class_events.count(3),
+                                            self.class_events.count(2),
                                             self.fsm,
-                                            vehicle, 
+                                            vehicle_ref, 
+                                            self.vehicle_update_tick,
                                             self.tick), 
                                         daemon=True)
                 self.class_events.append(class_index)
@@ -160,6 +164,7 @@ class Scheduler:
         # Does a warmup for 20 seconds to ensure recordings don't start at a zero state
         print("Warming up scenario...")
         self.tick.start(20*const.TICK_RATE)
+        self.vehicle_update_tick.start(2*const.TOTAL_FRAMES)
         self.tick.reset()
 
         # Main scenario loop, starts audio recording and FSM writing
@@ -188,6 +193,7 @@ class Scheduler:
     # Cleanup for the threads
     def stop_all(self):
         self.tick.stop()
+        self.vehicle_update_tick.stop()
         sleep(5)
         for thread in self.threads:
             thread.join(timeout=10.0)

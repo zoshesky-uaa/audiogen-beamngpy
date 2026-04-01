@@ -3,7 +3,7 @@ import zarr
 import threading
 import numpy as np
 import const
-import queue
+from collections import deque
 
 class FSM:
     def __init__(self, tick):
@@ -12,8 +12,14 @@ class FSM:
         # Sets up the directory and Zarr files for training data
         self.training_root, self.label_set, self.feature_set = self.create_trial_data()
         # Queues for communication between audio and vehicle threads
-        self.labelqueue = {queue_index: queue.Queue(maxsize=2) for queue_index in range(const.MAXIMUM_EMERGENCY_VEHICLES)}
-        self.featurequeue = queue.Queue(maxsize=2)
+        self.labelqueue = {
+            c_idx: {
+                t_idx: deque(maxlen=1)
+                for t_idx in range(const.MAXIMUM_CONTROLLABLE_VEHICLES)
+            } 
+            for c_idx in range(const.NUMBER_OF_SOUND_CLASSES)
+        }
+        self.featurequeue = deque(maxlen=1)
 
         # Writer thread object that flushes the above buffers every chunk
         self.writer = ZarrWriter(self.feature_set, 
@@ -94,7 +100,7 @@ class ZarrWriter(threading.Thread):
         self.labelqueue = labelqueue
         self.featurequeue = featurequeue
         self.feature_buffer = np.zeros((const.CHUNK_SIZE, const.N_INPUTS, const.N_BINS), dtype="f4")
-        self.label_buffer = np.zeros((const.CHUNK_SIZE, const.MAXIMUM_VEHICLES, 4), dtype="f4")
+        self.label_buffer = np.zeros((const.CHUNK_SIZE, const.NUMBER_OF_SOUND_CLASSES, const.MAXIMUM_CONTROLLABLE_VEHICLES, 3), dtype="f4")
         self.next_flush_frame = const.CHUNK_SIZE
 
     def run(self):
@@ -103,26 +109,30 @@ class ZarrWriter(threading.Thread):
             current_frame = self.tick.frame_index
             # Note: Maybe add the frame_index to events themselves so we know when they were sent to the queue
             # Gets latest event data from queues for each track and updates label buffer
-            for track_index in range(0, const.MAXIMUM_EMERGENCY_VEHICLES):
-                try:
-                    msg = self.labelqueue[track_index].get_nowait()
-                    self.labelqueue[track_index].task_done()
-                    local_idx = msg[0] % const.CHUNK_SIZE
-                    self.label_buffer[local_idx, track_index, :] = msg[1:]
-                except queue.Empty:
-                    local_idx = current_frame % const.CHUNK_SIZE
-                    # Check if the slot is all zeros before setting default
-                    if np.all(self.label_buffer[local_idx, track_index, :] == 0):
-                        self.label_buffer[local_idx, track_index, :] = [3, 0, 0, 0]
+            for class_index in range(const.NUMBER_OF_SOUND_CLASSES):
+                for track_index in range(const.MAXIMUM_CONTROLLABLE_VEHICLES):
+                    try:
+                        msg = self.labelqueue[class_index][track_index].popleft()
+                        local_idx = msg[0] % const.CHUNK_SIZE
+                        self.label_buffer[local_idx, class_index, track_index, :] =  msg[1:]
+                    except IndexError:
+                        local_idx = current_frame % const.CHUNK_SIZE
+                        if np.all(self.label_buffer[local_idx, class_index, track_index, :] != 0):
+                            continue
+                        if local_idx -1 >= 0 and np.all(self.label_buffer[local_idx-1, class_index, track_index, :] != 0):
+                            self.label_buffer[local_idx, class_index, track_index, :] = self.label_buffer[local_idx-1, class_index, track_index, :]
                          
             # Gets latest feature data from queue and updates feature buffer
             try:
-                msg = self.featurequeue.get_nowait()
-                self.featurequeue.task_done()
+                msg = self.featurequeue.popleft()
                 local_idx = msg[0] % const.CHUNK_SIZE
                 self.feature_buffer[local_idx, :, :] = msg[1]
-            except queue.Empty:                
-                pass      
+            except IndexError:
+                local_idx = current_frame % const.CHUNK_SIZE
+                if np.all(self.feature_buffer[local_idx, :, :] != 0):
+                    continue
+                if local_idx -1 >= 0 and np.all(self.feature_buffer[local_idx-1, :, :] != 0):
+                    self.feature_buffer[local_idx, :, :] = self.feature_buffer[local_idx-1, :, :]
 
             if current_frame >= self.next_flush_frame:
                 start_idx = self.next_flush_frame - const.CHUNK_SIZE

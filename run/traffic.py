@@ -15,20 +15,22 @@ class VehicleSoundEvent:
                  class_index, 
                  track_index,  
                  fsm, 
-                 vehicle,
-                 tick):
+                 vehicle_ref,
+                 vehicle_update_tick,
+                 main_tick):
         self.class_index = class_index
         self.track_index = track_index
-        self.tick = tick
+        self.vehicle_update_tick = vehicle_update_tick
+        self.main_tick = main_tick
         self.fsm = fsm
         # Catch for empty vehicles to let them send empty resets
-        if vehicle is None:
+        if vehicle_ref is None:
             self.empty_action()
             return
         self.simulation = simulation
         self.dispatcher = simulation.dispatcher
-        self.driver = simulation.vehicle_controller.driver
-        self.vehicle = vehicle
+        self.driver_ref = simulation.vehicle_controller.driver_ref
+        self.vehicle_ref = vehicle_ref
         self.run()
  
     def empty_action(self):
@@ -36,15 +38,14 @@ class VehicleSoundEvent:
         return
 
     def run(self):
-        self.tick.waited_action(self.normal_behavior)
+        self.main_tick.waited_action(self.normal_behavior)
         # No behavior set here currently
-        #self.tick.waited_action_iterate()
+        #self.main_tick.waited_action_iterate()
 
     def normal_behavior(self):
-        self.dispatcher.send(self.vehicle.ai.set_mode, "traffic")
-        self.dispatcher.send(self.vehicle.ai.set_aggression, 0.2)
-        self.dispatcher.send(self.vehicle.ai.drive_in_lane, True)
-        #self.dispatcher.send(self.vehicle.ai.set_speed, 15.65, mode="limit")
+        self.dispatcher.send(self.vehicle_ref.vehicle.ai.set_mode, "traffic")
+        self.dispatcher.send(self.vehicle_ref.vehicle.ai.set_aggression, 0.2)
+        self.dispatcher.send(self.vehicle_ref.vehicle.ai.drive_in_lane, True)
     
     '''
     # Horns can't be triggered directly via BeamNGpy, we will need to use Lua GE commands for this
