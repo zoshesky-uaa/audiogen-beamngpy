@@ -11,7 +11,7 @@ from spawns import west_coast_usa
 
 class Simulation:
     def __init__(self):
-        # BeamNGpy connection setup
+        # BeamNGpy connection setup, debug mode enabled writes a tech log to %LOCALAPPDATA%\BeamNG.tech\<version>\
         self.beamng = BeamNGpy(
             host="localhost",        
             port=25252,           

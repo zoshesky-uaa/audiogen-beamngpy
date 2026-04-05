@@ -41,7 +41,7 @@ class VehicleSoundEvent:
     def run(self):
         # Delays until warmup is started
         self.main_tick.waited_action(self.normal_behavior)    
-        # Lambda to select either an empty event or sirent event, passed to waited_action_iterate
+        # Lambda to select either an empty event or siren event, passed to waited_action_iterate
         action = lambda: random.choices([self.random_empty, self.random_siren_event],
                                     weights=[0.50, 0.50], k=1)[0]()
         self.main_tick.waited_action_iterate(action)
@@ -64,7 +64,7 @@ class VehicleSoundEvent:
         # When the vehicle is within an audible range (not defined exactly) it'll trigger a siren event
         # Otherwise, it writes a reset and simply heads towards the player so its closer for the next event
         action = None
-        if (position < 400):
+        if (position < 400 and position != 0):
             print(f"CE({self.class_index}), TE({self.track_index}): Starting siren event at vehicle frame {self.vehicle_update_tick.frame_index}, at distance {position:.2f} m.")
             #Setup random siren behavior here
             self.dispatcher.send(self.vehicle_ref.vehicle.set_lights, lightbar=2)
@@ -80,12 +80,12 @@ class VehicleSoundEvent:
             behavior()
             action = lambda: self.write_event()
         else:
-            print(f"CE({self.class_index}), TE({self.track_index}): Starting light follow at frame {self.tick.frame_index}, at distance {position:.2f} m.")
+            print(f"CE({self.class_index}), TE({self.track_index}): Starting light follow at vehicle frame {self.vehicle_update_tick.frame_index}, at distance {position:.2f} m.")
             self.dispatcher.send(self.vehicle_ref.vehicle.set_lights, lightbar=0)
             self.follow(event_end_frame)
             self.write_reset()
 
-        self.vehicle_update_tick.waited_action_iterate(action)
+        self.vehicle_update_tick.waited_action_iterate(action, max_frame=event_end_frame)
         
 
     def random_empty(self):
