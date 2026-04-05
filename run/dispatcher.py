@@ -35,16 +35,16 @@ class Dispatcher:
     def send(self, fn, *args, **kwargs):
         self.dispatchqueue.put(EventMsg(fn, args, kwargs))
 
-    def send_sync(self, fn, *args, timeout: float = 60.0, **kwargs):
-        # Increased default timeout to 60s because BeamNG loading commands (like scenario.make) can take a very long time
+    def send_sync(self, fn, *args, timeout: float = 120.0, **kwargs):
         fut = concurrent.futures.Future()
         self.dispatchqueue.put(EventMsg(fn, args, kwargs, future=fut))
         try:
             return fut.result(timeout=timeout)
-        except concurrent.futures.TimeoutError:
+        except concurrent.futures.TimeoutError as e:
             func_name = getattr(fn, '__name__', str(fn))
-            print(f"[Dispatcher Error] timeout waiting for {func_name} after {timeout}s")
-            raise TimeoutError(f"Dispatcher command '{func_name}' timed out.")
+            print("[Dispatcher Error] send_sync call traceback (most recent call last):")
+            print("".join(traceback.format_stack()[:-1]))
+            raise TimeoutError(f"Dispatcher command '{func_name}' timed out.") from e
 
     def run(self):
         while self.simulation_check():

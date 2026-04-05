@@ -1,7 +1,7 @@
 # Configuration constants for the simulation
 
 # Path to BeamNG.tech installation directory. Update this path to match your local setup.
-BEAMNG_LOCATION = r"E:\BeamNG.tech.v0.38.3.0"
+BEAMNG_LOCATION = r"D:\BeamNG.tech.v0.38.3.0"
 
 # Defines whether the simulation is in training mode (AI-controlled) or not (human-controlled)
 TRAINING = True

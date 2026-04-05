@@ -176,13 +176,13 @@ class Scheduler:
         self.threads.append(self.fsm.writer)
 
         # Start recorder
-        audio_data = recorder.AudioRec(tick=self.tick, fsm=self.fsm)
+        #audio_data = recorder.AudioRec(tick=self.tick, fsm=self.fsm)
 
         # FFT compute thread for audio feature extraction
-        audio_data.fft_thread.start()
-        self.threads.append(audio_data.fft_thread)
+        #audio_data.fft_thread.start()
+        #self.threads.append(audio_data.fft_thread)
 
-        self.tick.external_clock = True
+        #self.tick.external_clock = True
         self.tick.start(const.TOTAL_FRAMES)
 
         # After reaching end frame, intiate shutdown for the internal tick and audio recording
