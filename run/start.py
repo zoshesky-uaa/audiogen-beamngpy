@@ -3,10 +3,9 @@ from beamngpy.logging import BNGDisconnectedError
 from run import scheduler, dispatcher
 import threading
 from spawns import vehicles
-from time import sleep, time
+from time import sleep
 import random
 import const
-from math import ceil
 from spawns import west_coast_usa
 
 class Simulation:
@@ -48,23 +47,23 @@ class Simulation:
         # Get correct presets, some of these dont exist
         weather_presets = ['clear', 'cloudy', 'rainy', 'stormy', 'foggy']  
         #self.current_weather = random.choice(weather_presets)  
-        #self.dispatcher.send(self.beamng.env.set_weather_preset, self.current_weather, time=5)
+        #self.beamng.env.set_weather_preset(self.current_weather, time=5)
 
     # Selects a random time of day for simulation
     def random_tod_setup(self):
         time_presets =  ['morning', 'noon', 'evening', 'night'] 
         self.current_time = random.choice(time_presets)
         match self.current_time:
-            case 'evening': self.dispatcher.send(self.beamng.env.set_tod, 0.25)
-            case 'night': self.dispatcher.send(self.beamng.env.set_tod, 0.5)
-            case 'morning': self.dispatcher.send(self.beamng.env.set_tod, 0.75)
-            case 'noon': self.dispatcher.send(self.beamng.env.set_tod, 1)
+            case 'evening': self.beamng.env.set_tod(0.25)
+            case 'night': self.beamng.env.set_tod(0.5)
+            case 'morning': self.beamng.env.set_tod(0.75)
+            case 'noon': self.beamng.env.set_tod(1.0)
 
     # Converts the simulation to imperial units
     def convert_to_imperial(self):
-        self.dispatcher.send(self.beamng.settings.change, 'uiUnits', 'imperial')
-        self.dispatcher.send(self.beamng.settings.change, 'uiUnitLength', 'imperial')
-        self.dispatcher.send(self.beamng.settings.apply_graphics)
+        self.beamng.settings.change('uiUnits', 'imperial')
+        self.beamng.settings.change('uiUnitLength', 'imperial')
+        self.beamng.settings.apply_graphics()
 
     # Does cleanup for existing scenarios that exists (unlikely) and does cleanup for their files (likely)
     def clean_scenario_startup(self, scenario_name, level_name):
@@ -106,11 +105,11 @@ class Simulation:
         self.vehicle_controller.driver_presetup(ai=ai) 
 
         #Send sync for blocking each step to ensure they're loaded in order
-        self.dispatcher.send_sync(self.scenario.make, self.beamng)
-        self.dispatcher.send_sync(self.beamng.scenario.load, self.scenario)
+        self.scenario.make(self.beamng)
+        self.beamng.scenario.load(self.scenario)
         self.event_scheduler.transition_to_scenario()
-        self.dispatcher.send_sync(self.beamng.scenario.start)
-        self.dispatcher.send_sync(self.beamng.control.pause)
+        self.beamng.scenario.start()
+        self.beamng.control.pause()
         # Setups conditions for the scenario
         self.random_weather_setup()
         self.random_tod_setup()
@@ -166,15 +165,15 @@ class Simulation:
         if hasattr(self, '_spawned_vehicles'):
             self._spawned_vehicles.clear()
         if hasattr(self, 'scenario') and self.scenario is not None:
-            self.dispatcher.send_sync(self.beamng.scenario.stop)
+            self.beamng.scenario.stop
             sleep(1.0)
-            self.dispatcher.send_sync(self.scenario.delete, self.beamng)
+            self.scenario.delete, self.beamng
             self.scenario = None  
 
     # Closes the connection to BeamNG and stops the dispatcher thread that recieves the commands
     def close(self):
         self.dispatcher.clear()
-        self.dispatcher.send_sync(self.beamng.close)
+        self.beamng.close
         self.on = False
         self.dispatcher_thread.join(timeout=10.0)
         

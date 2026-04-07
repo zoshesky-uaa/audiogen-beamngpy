@@ -106,7 +106,7 @@ class ZarrWriter(threading.Thread):
                 # Note edge case where previous frame index data is not flushed and is sent to the position at the back of the queue
                 local_idx = msg[0][0] % const.CHUNK_SIZE
                 self.label_buffer[local_idx, msg[0][1], msg[0][2], :] =  msg[1:]
-            except UnboundLocalError:
+            except (IndexError, UnboundLocalError):
                 local_idx = current_frame % const.CHUNK_SIZE
                 if np.all(self.label_buffer[local_idx, msg[0][1], msg[0][2], :] != 0):
                     continue
@@ -118,7 +118,7 @@ class ZarrWriter(threading.Thread):
                 msg = self.featurequeue.popleft()
                 local_idx = msg[0] % const.CHUNK_SIZE
                 self.feature_buffer[local_idx, :, :] = msg[1]
-            except UnboundLocalError:
+            except (IndexError, UnboundLocalError):
                 local_idx = current_frame % const.CHUNK_SIZE
                 if np.all(self.feature_buffer[local_idx, :, :] != 0):
                     continue
