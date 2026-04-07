@@ -56,7 +56,7 @@ class builder:
         
         return pos, rot_quat
 
-    
+    # Main thread operation
     def vehicle_spawn(self, EV=False, control=False):
         spawn = self.road_random_spawn()
         if EV:
@@ -77,20 +77,22 @@ class builder:
                 licence=template.options.get('licence')
             )
             self.traffic_count += 1
-        self.simulation.dispatcher.send_sync(self.simulation.beamng.vehicles.spawn, vehicle, pos=spawn[0], rot_quat=spawn[1], cling=True, connect=True)
+        self.simulation.beamng.vehicles.spawn(vehicle, pos=spawn[0], rot_quat=spawn[1], cling=True, connect=True)
         veh_ref = Vehicle_Reference(vehicle, self.simulation.event_scheduler.vehicle_update_tick, self.simulation.beamng, control)
         return veh_ref
     
+    # Main thread operation
     def driver_presetup(self, ai=True):
         # Driver must have a position before the scenario is loaded and loaded before scenario is made,
         # So therefore I had to extract random positions, getting a better list is ideal
         spawn = self.simulation.environment.random_location()
         driver = self.random_vehicle()
         # Store the driver reference
-        self.simulation.dispatcher.send_sync(self.simulation.scenario.add_vehicle, driver, pos=spawn[0], rot_quat=spawn[1], cling=True)
+        self.simulation.scenario.add_vehicle(driver, pos=spawn[0], rot_quat=spawn[1], cling=True)
         self.driver_ref = Vehicle_Reference(driver, self.simulation.event_scheduler.vehicle_update_tick, self.simulation.beamng, control=True, driver=True)
         self.simulation.event_scheduler.append_event(99, ai=ai)
 
+    # Secondary thread operation
     def switch_to_driver(self):
         self.simulation.dispatcher.send(self.simulation.beamng.vehicles.switch, self.driver_ref.vehicle)
 
@@ -106,6 +108,7 @@ class builder:
 VehicleState = namedtuple('VehicleState', ['position', 'velocity', 'steering', 'braking', 'damage', 'lane_data'])
 class Vehicle_Reference:
     def __init__(self, vehicle, tick, beamng, control=False, driver=False):
+        # Vehicle objects are thread-safe as of 1.30
         self.vehicle = vehicle
         self.tick = tick
         self.beamng = beamng
