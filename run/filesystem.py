@@ -11,15 +11,15 @@ class FSM:
         self.tick = tick
         # Sets up the directory and Zarr files for training data
         self.training_root, self.label_set, self.feature_set = self.create_trial_data()
-        # Queues for communication between audio and vehicle threads
         self.labelqueue = {
             c_idx: {
-                t_idx: deque(maxlen=1)
+                # Arbitrary length, zarr is always handling chunks so this doesn't matter much
+                t_idx: deque(maxlen=5)
                 for t_idx in range(const.MAXIMUM_CONTROLLABLE_VEHICLES)
             } 
             for c_idx in range(const.NUMBER_OF_SOUND_CLASSES)
         }
-        self.featurequeue = deque(maxlen=1)
+        self.featurequeue = deque(maxlen=5)
 
         # Writer thread object that flushes the above buffers every chunk
         self.writer = ZarrWriter(self.feature_set, 
@@ -114,6 +114,7 @@ class ZarrWriter(threading.Thread):
                 for track_index in range(const.MAXIMUM_CONTROLLABLE_VEHICLES):
                     try:
                         msg = self.labelqueue[class_index][track_index].popleft()
+                        # Note edge case where previous frame index data is not flushed and is sent to the position at the back of the queue
                         local_idx = msg[0] % const.CHUNK_SIZE
                         self.label_buffer[local_idx, class_index, track_index, :] =  msg[1:]
                     except IndexError:
