@@ -11,15 +11,8 @@ class FSM:
         self.tick = tick
         # Sets up the directory and Zarr files for training data
         self.training_root, self.label_set, self.feature_set = self.create_trial_data()
-        self.labelqueue = {
-            c_idx: {
-                # Arbitrary length, zarr is always handling chunks so this doesn't matter much
-                t_idx: deque(maxlen=5)
-                for t_idx in range(const.MAXIMUM_CONTROLLABLE_VEHICLES)
-            } 
-            for c_idx in range(const.NUMBER_OF_SOUND_CLASSES)
-        }
-        self.featurequeue = deque(maxlen=5)
+        self.labelqueue = deque(maxlen=10)
+        self.featurequeue = deque(maxlen=10)
 
         # Writer thread object that flushes the above buffers every chunk
         self.writer = ZarrWriter(self.feature_set, 
@@ -108,28 +101,24 @@ class ZarrWriter(threading.Thread):
         print("ZarrWriter thread started.")
         while not (self.tick.shutdown.is_set()):
             current_frame = self.tick.frame_index
-            # Note: Maybe add the frame_index to events themselves so we know when they were sent to the queue
-            # Gets latest event data from queues for each track and updates label buffer
-            for class_index in range(const.NUMBER_OF_SOUND_CLASSES):
-                for track_index in range(const.MAXIMUM_CONTROLLABLE_VEHICLES):
-                    try:
-                        msg = self.labelqueue[class_index][track_index].popleft()
-                        # Note edge case where previous frame index data is not flushed and is sent to the position at the back of the queue
-                        local_idx = msg[0] % const.CHUNK_SIZE
-                        self.label_buffer[local_idx, class_index, track_index, :] =  msg[1:]
-                    except IndexError:
-                        local_idx = current_frame % const.CHUNK_SIZE
-                        if np.all(self.label_buffer[local_idx, class_index, track_index, :] != 0):
-                            continue
-                        if local_idx -1 >= 0 and np.all(self.label_buffer[local_idx-1, class_index, track_index, :] != 0):
-                            self.label_buffer[local_idx, class_index, track_index, :] = self.label_buffer[local_idx-1, class_index, track_index, :]
-                         
-            # Gets latest feature data from queue and updates feature buffer
+            try:
+                msg = self.labelqueue.popleft()
+                # Note edge case where previous frame index data is not flushed and is sent to the position at the back of the queue
+                local_idx = msg[0][0] % const.CHUNK_SIZE
+                self.label_buffer[local_idx, msg[0][1], msg[0][2], :] =  msg[1:]
+            except UnboundLocalError:
+                local_idx = current_frame % const.CHUNK_SIZE
+                if np.all(self.label_buffer[local_idx, msg[0][1], msg[0][2], :] != 0):
+                    continue
+                # Writes the last frame's data if there isn't zeros written to reset the state
+                if local_idx -1 >= 0 and np.all(self.label_buffer[local_idx-1, msg[0][1], msg[0][2], :] != 0):
+                    self.label_buffer[local_idx, msg[0][1], msg[0][2], :] = self.label_buffer[local_idx-1, msg[0][1], msg[0][2], :]
+            
             try:
                 msg = self.featurequeue.popleft()
                 local_idx = msg[0] % const.CHUNK_SIZE
                 self.feature_buffer[local_idx, :, :] = msg[1]
-            except IndexError:
+            except UnboundLocalError:
                 local_idx = current_frame % const.CHUNK_SIZE
                 if np.all(self.feature_buffer[local_idx, :, :] != 0):
                     continue

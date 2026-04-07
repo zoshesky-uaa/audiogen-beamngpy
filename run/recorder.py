@@ -3,7 +3,7 @@ import numpy as np
 import audioflux as af
 import const 
 import threading
-import queue
+from collections import deque
 
 class AudioRec:
     def __init__(self, tick, fsm):
@@ -27,7 +27,7 @@ class AudioRec:
         
         select_device(target_name = const.AUDIO_INPUT_DEVICE_NAME)
         self.buffer = np.zeros((const.AUDIO_CHANNELS, const.FFT_SIZE), dtype=np.float32)
-        self.audioqueue = queue.Queue(maxsize=10)
+        self.audioqueue = deque(maxlen=10)
         self.fft_thread = FFTCompute(tick=self.tick, audioqueue=self.audioqueue, featurequeue=self.fsm.featurequeue)
         
         # Start continuous audio stream, reading exactly hop_length samples at a time

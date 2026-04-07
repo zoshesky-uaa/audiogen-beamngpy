@@ -137,9 +137,9 @@ class VehicleSoundEvent:
 
     def write_event(self):
         position = self.position_data(relative=True)
-        msg = (self.main_tick.frame_index, position[0], position[1], position[2])
-        self.fsm.labelqueue[self.class_index][self.track_index].append(msg)
+        msg = ((self.main_tick.frame_index, self.class_index, self.track_index), position[0], position[1], position[2])
+        self.fsm.labelqueue.append(msg)
     
     def write_reset(self):
-        msg = (self.main_tick.frame_index,  0.0, 0.0, 0.0)
-        self.fsm.labelqueue[self.class_index][self.track_index].append(msg)
+        msg = ((self.main_tick.frame_index, self.class_index, self.track_index),  0.0, 0.0, 0.0)
+        self.fsm.labelqueue.append(msg)

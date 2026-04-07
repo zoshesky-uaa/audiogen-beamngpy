@@ -144,7 +144,6 @@ class Scheduler:
         instruct = lambda : (
             self.simulation.dispatcher.send(self.simulation.beamng.queue_lua_command, "core_input_actionFilter.setGroup('all', true)"),
             self.simulation.dispatcher.send(self.simulation.beamng.queue_lua_command, "ui_fadeScreen.fadeToBlack(0.5)"),
-            self.simulation.dispatcher.send_sync(self.simulation.beamng.queue_lua_command, "SFXSystem.setGlobalParameter('g_FadeTimeMS', {1.0 * 1000})"),
             self.simulation.dispatcher.send_sync(self.simulation.beamng.queue_lua_command, "SFXSystem.setGlobalParameter('g_GameLoading', 1)"),
             self.tick.waited_action(),
             self.simulation.dispatcher.send(self.simulation.beamng.queue_lua_command, "SFXSystem.setGlobalParameter('g_GameLoading', 0)"),
