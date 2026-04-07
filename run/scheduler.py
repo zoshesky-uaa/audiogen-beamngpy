@@ -114,32 +114,30 @@ class Scheduler:
                                             self.tick,
                                             ai), 
                                           daemon=True)
-                self.threads.append(thread)
             case 0:
                 thread = threading.Thread(target=traffic.VehicleSoundEvent, 
                                             args=(self.simulation,
                                             class_index,
-                                            self.class_events.count(1),
+                                            self.class_events.count(class_index),
                                             self.fsm,
                                             vehicle_ref, 
                                             self.vehicle_update_tick,
                                             self.tick), 
                                           daemon=True)
-                self.class_events.append(class_index)
-                self.threads.append(thread)
+                
             case 1:
                 thread = threading.Thread(target=ev.VehicleSoundEvent, 
                                             args=(self.simulation,
                                             class_index,
-                                            self.class_events.count(2),
+                                            self.class_events.count(class_index),
                                             self.fsm,
                                             vehicle_ref, 
                                             self.vehicle_update_tick,
                                             self.tick), 
                                         daemon=True)
-                self.class_events.append(class_index)
-                self.threads.append(thread)
-            case _: return   
+            case _: return
+        self.class_events.append(class_index)  
+        self.threads.append(thread)
         thread.start()  
 
     def transition_to_scenario(self):
