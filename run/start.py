@@ -6,15 +6,17 @@ from time import sleep
 import random
 import const
 from spawns import west_coast_usa
+import os
 
 class Simulation:
     def __init__(self):
+        self.create_temp_folder()
         # BeamNGpy connection setup, debug mode enabled writes a tech log to %LOCALAPPDATA%\BeamNG.tech\<version>\
         self.beamng = BeamNGpy(
             host="localhost",        
             port=25252,           
             home=const.BEAMNG_LOCATION,
-            debug=True,
+            user=self.temp_folder,
             gfx='dx11'
         )
 
@@ -41,6 +43,12 @@ class Simulation:
         #self.current_weather = random.choice(weather_presets)  
         #self.beamng.env.set_weather_preset(self.current_weather, time=5)
 
+    def create_temp_folder(self):
+        # Creates a temporary folder for the current scenario to store the data, will be deleted after the scenario is done
+        self.temp_folder = f"beamngpy"
+        if not os.path.exists(self.temp_folder):
+            os.makedirs(self.temp_folder)
+
     # Selects a random time of day for simulation
     def random_tod_setup(self):
         time_presets =  ['morning', 'noon', 'evening', 'night'] 
@@ -58,24 +66,13 @@ class Simulation:
         self.beamng.settings.apply_graphics()
 
     # Does cleanup for existing scenarios that exists (unlikely) and does cleanup for their files (likely)
-    def clean_scenario_startup(self, scenario_name, level_name):
-        try:  
-            if self.beamng._scenario:  
-                self.beamng.scenario.stop()  
-        except:  
-            pass  
-        # Doesn't cleanup really, needs to be fixed
-        try:  
-            scenarios = self.beamng.scenario.get_level_scenarios(level_name)  
-            for scenario in scenarios:  
-                if scenario.name == scenario_name:  
-                    scenario.delete(self.beamng)  
-                    print(f"Deleted existing scenario: {scenario_name}")  
-                    break  
-        except Exception as e:  
-            print(f"Failed to delete scenario {scenario_name}: {e}")  
+    def clean_scenario_startup(self):
+        if os.path.exists(self.temp_folder + "/levels"):
+            os.rmdir(self.temp_folder + "/levels")
+            os.mkdir(self.temp_folder + "/levels")
 
     def scenario_setup(self, count, ai=True):
+        self.clean_scenario_startup()
         # Environment choice
         self.environment = random.choices([west_coast_usa.builder()],
                                            weights=[1], k=1)[0]
@@ -84,7 +81,6 @@ class Simulation:
         scenario_name = f'Scenario_{count}'  
         level_name = self.environment.name
         self.scenario = Scenario(level_name, scenario_name) 
-        self.clean_scenario_startup(scenario_name, level_name)
 
         # Intializes the vehicle controller, which handles location spawns based on the environment
         self.vehicle_controller = vehicles.builder(simulation=self)
