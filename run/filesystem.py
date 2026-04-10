@@ -101,29 +101,21 @@ class ZarrWriter(threading.Thread):
         print("ZarrWriter thread started.")
         while not (self.tick.shutdown.is_set()):
             current_frame = self.tick.frame_index
+            # We must assume the data flow is fast enough because its hard to correct 
             try:
-                msg = self.labelqueue.popleft()
+                msg_l = self.labelqueue.popleft()
                 # Note edge case where previous frame index data is not flushed and is sent to the position at the back of the queue
-                local_idx = msg[0][0] % const.CHUNK_SIZE
-                self.label_buffer[local_idx, msg[0][1], msg[0][2], :] =  msg[1:]
+                local_idx = msg_l[0][0] % const.CHUNK_SIZE
+                self.label_buffer[local_idx, msg_l[0][1], msg_l[0][2], :] =  msg_l[1:]
             except (IndexError, UnboundLocalError):
-                local_idx = current_frame % const.CHUNK_SIZE
-                if np.all(self.label_buffer[local_idx, msg[0][1], msg[0][2], :] != 0):
-                    continue
-                # Writes the last frame's data if there isn't zeros written to reset the state
-                if local_idx -1 >= 0 and np.all(self.label_buffer[local_idx-1, msg[0][1], msg[0][2], :] != 0):
-                    self.label_buffer[local_idx, msg[0][1], msg[0][2], :] = self.label_buffer[local_idx-1, msg[0][1], msg[0][2], :]
-            
+                continue
+
             try:
-                msg = self.featurequeue.popleft()
-                local_idx = msg[0] % const.CHUNK_SIZE
-                self.feature_buffer[local_idx, :, :] = msg[1]
+                msg_f = self.featurequeue.popleft()
+                local_idx = msg_f[0] % const.CHUNK_SIZE
+                self.feature_buffer[local_idx, :, :] = msg_f[1]
             except (IndexError, UnboundLocalError):
-                local_idx = current_frame % const.CHUNK_SIZE
-                if np.all(self.feature_buffer[local_idx, :, :] != 0):
-                    continue
-                if local_idx -1 >= 0 and np.all(self.feature_buffer[local_idx-1, :, :] != 0):
-                    self.feature_buffer[local_idx, :, :] = self.feature_buffer[local_idx-1, :, :]
+                continue
 
             if current_frame >= self.next_flush_frame:
                 start_idx = self.next_flush_frame - const.CHUNK_SIZE

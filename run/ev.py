@@ -30,7 +30,6 @@ class VehicleSoundEvent:
             self.empty_action()
             return
         self.simulation = simulation
-        self.dispatcher = simulation.dispatcher
         self.driver_ref = simulation.vehicle_controller.driver_ref
         self.vehicle_ref = vehicle_ref
         self.run()
@@ -45,15 +44,15 @@ class VehicleSoundEvent:
         action = lambda: random.choices([self.random_empty, self.random_siren_event],
                                     weights=[0.50, 0.50], k=1)[0]()
         self.main_tick.waited_action_iterate(action)
-
+    
     def normal_behavior(self):
         # Sets some "normal" conditions for the vehicle
         # Lightbar condition is what controls the siren state, 0 is off, 1 is on but not audible, 2 is on and audible.
-        self.dispatcher.send(self.vehicle_ref.vehicle.set_lights, lightbar=0)
-        self.dispatcher.send(self.vehicle_ref.vehicle.ai.set_mode, "traffic")
-        self.dispatcher.send(self.vehicle_ref.vehicle.ai.set_aggression, 0.1)
-        self.dispatcher.send(self.vehicle_ref.vehicle.ai.drive_in_lane, True)
-        #self.dispatcher.send(self.vehicle_ref.vehicle.ai.set_speed, 15.65, mode="limit")
+        self.vehicle_ref.vehicle.set_lights(lightbar=0)
+        self.vehicle_ref.vehicle.ai.set_mode("traffic")
+        self.vehicle_ref.vehicle.ai.set_aggression(0.1)
+        self.vehicle_ref.vehicle.ai.drive_in_lane(True)
+        #self.vehicle_ref.vehicle.ai.set_speed(15.65, mode="limit")
 
     def random_siren_event(self):
         position = self.position_data()
@@ -63,29 +62,28 @@ class VehicleSoundEvent:
         
         # When the vehicle is within an audible range (not defined exactly) it'll trigger a siren event
         # Otherwise, it writes a reset and simply heads towards the player so its closer for the next event
-        action = None
         if (position < 400 and position != 0):
             print(f"CE({self.class_index}), TE({self.track_index}): Starting siren event at vehicle frame {self.vehicle_update_tick.frame_index}, at distance {position:.2f} m.")
             #Setup random siren behavior here
-            self.dispatcher.send(self.vehicle_ref.vehicle.set_lights, lightbar=2)
+            self.vehicle_ref.vehicle.set_lights(lightbar=2)
             behaviors = [  
                 lambda: self.follow(event_end_frame),  
                 lambda: (
-                    self.dispatcher.send(self.vehicle_ref.vehicle.ai.set_mode, "random"),  
-                    self.dispatcher.send(self.vehicle_ref.vehicle.ai.set_aggression, 0.1),
-                    self.dispatcher.send(self.vehicle_ref.vehicle.ai.drive_in_lane, True)        
+                    self.vehicle_ref.vehicle.ai.set_mode("random"),  
+                    self.vehicle_ref.vehicle.ai.set_aggression(0.1),
+                    self.vehicle_ref.vehicle.ai.drive_in_lane(True)        
                 )
             ]
             behavior = random.choices(behaviors, weights=[0.5, 0.5], k=1)[0]    
             behavior()
             action = lambda: self.write_event()
-        else:
+            self.vehicle_update_tick.waited_action_iterate(action, max_frame=event_end_frame)
+        elif position != 0:
             print(f"CE({self.class_index}), TE({self.track_index}): Starting light follow at vehicle frame {self.vehicle_update_tick.frame_index}, at distance {position:.2f} m.")
-            self.dispatcher.send(self.vehicle_ref.vehicle.set_lights, lightbar=0)
+            self.vehicle_ref.vehicle.set_lights(lightbar=0)
             self.follow(event_end_frame)
             self.write_reset()
-
-        self.vehicle_update_tick.waited_action_iterate(action, max_frame=event_end_frame)
+            self.vehicle_update_tick.waited_action_iterate(max_frame=event_end_frame)
         
 
     def random_empty(self):
@@ -128,7 +126,7 @@ class VehicleSoundEvent:
             't': (const.TICK_DURATION_SECONDS*end_frame- self.main_tick.frame_index*const.TICK_DURATION_SECONDS)  
         }
 
-        self.dispatcher.send(self.vehicle_ref.vehicle.ai.drive_using_waypoints,  
+        self.vehicle_ref.vehicle.ai.drive_using_waypoints(  
             wp_target_list=[wp1, wp2],  
             aggression=0.5,  
             avoid_cars=True,  

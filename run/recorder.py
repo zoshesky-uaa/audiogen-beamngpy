@@ -30,20 +30,14 @@ class AudioRec:
         self.audioqueue = deque(maxlen=10)
         self.fft_thread = FFTCompute(tick=self.tick, audioqueue=self.audioqueue, featurequeue=self.fsm.featurequeue)
         
-        # Start continuous audio stream, reading exactly hop_length samples at a time
-        try:
-            self.stream = sd.InputStream(samplerate=const.SAMPLING_FREQUENCY,
-                                         channels=const.AUDIO_CHANNELS,
-                                         blocksize=int(const.SAMPLING_FREQUENCY / const.TICK_RATE),
-                                         device=self.device,
-                                         latency='low',
-                                         dtype='float32',
-                                         callback=self._audio_callback)
-            self.stream.start()
-        except Exception as e:
-            raise RuntimeError(
-                f"Failed to start audio input stream (device={self.device}, channels={self.channels}, samplerate={self.samplerate}): {e}"
-            ) from e
+        self.stream = sd.InputStream(samplerate=const.SAMPLING_FREQUENCY,
+                                        channels=const.AUDIO_CHANNELS,
+                                        blocksize=int(const.SAMPLING_FREQUENCY / const.TICK_RATE),
+                                        device=self.device,
+                                        latency='low',
+                                        dtype='float32',
+                                        callback=self._audio_callback)
+        self.stream.start()
    
 
 
@@ -51,14 +45,7 @@ class AudioRec:
         """Called every time hop_length samples are available."""
         if status:
             print(f"Audio status string: {status}")
-        
-        try:
-            self.audioqueue.put_nowait(indata.copy())
-        except queue.Full:
-            _ = self.audioqueue.get_nowait()
-            self.audioqueue.task_done()
-            self.audioqueue.put_nowait(indata.copy())
-        
+        self.audioqueue.append(indata.copy())    
         # Use the audio hardware callback clock to drive the simulation tick
         self.tick.advance_frame()
 
@@ -84,8 +71,8 @@ class FFTCompute(threading.Thread):
         print("FFTCompute thread started.")
         while not (self.tick.shutdown.is_set()):
             try:
-                audio_data = self.audioqueue.get_nowait()
-                self.audioqueue.task_done()
+                audio_data = self.audioqueue.popleft()
+
                 # Shift the front bits of a blocksize left to remove them
                 self.buffer[:, :-self.blocksize] = self.buffer[:, self.blocksize:]
                 # Insert new another hop_length samples to the end (transpose to match channel structure)
@@ -115,5 +102,5 @@ class FFTCompute(threading.Thread):
                 combined_features = np.concatenate([amp_norm, phase_norm], axis=0)
                 msg = (self.tick.frame_index, combined_features)
                 self.featurequeue.append(msg)
-            except queue.Empty:
-                pass
+            except (IndexError, UnboundLocalError):
+                continue

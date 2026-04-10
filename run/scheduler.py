@@ -142,13 +142,13 @@ class Scheduler:
 
     def transition_to_scenario(self):
         instruct = lambda : (
-            self.simulation.dispatcher.send(self.simulation.beamng.queue_lua_command, "core_input_actionFilter.setGroup('all', true)"),
-            self.simulation.dispatcher.send(self.simulation.beamng.queue_lua_command, "ui_fadeScreen.fadeToBlack(0.5)"),
-            self.simulation.dispatcher.send_sync(self.simulation.beamng.queue_lua_command, "SFXSystem.setGlobalParameter('g_GameLoading', 1)"),
+            self.simulation.beamng.queue_lua_command("core_input_actionFilter.setGroup('all', true)"),
+            self.simulation.beamng.queue_lua_command("ui_fadeScreen.fadeToBlack(0.5)"),
+            self.simulation.beamng.queue_lua_command("SFXSystem.setGlobalParameter('g_GameLoading', 1)"),
             self.tick.waited_action(),
-            self.simulation.dispatcher.send(self.simulation.beamng.queue_lua_command, "SFXSystem.setGlobalParameter('g_GameLoading', 0)"),
-            self.simulation.dispatcher.send(self.simulation.beamng.queue_lua_command, "ui_fadeScreen.fadeFromBlack(0.5)"),  
-            self.simulation.dispatcher.send(self.simulation.beamng.queue_lua_command, "core_input_actionFilter.setGroup('all', false)"),
+            self.simulation.beamng.queue_lua_command("SFXSystem.setGlobalParameter('g_GameLoading', 0)"),
+            self.simulation.beamng.queue_lua_command("ui_fadeScreen.fadeFromBlack(0.5)"),  
+            self.simulation.beamng.queue_lua_command("core_input_actionFilter.setGroup('all', false)"),
         )  
         thread = threading.Thread(target=instruct, daemon=True)
         self.threads.append(thread)
@@ -157,7 +157,7 @@ class Scheduler:
     # Control flow function for the simulation
     def simulate(self):
         audio_data = None
-        self.simulation.dispatcher.send(self.simulation.beamng.control.resume)
+        self.simulation.beamng.control.resume()
         # Does a warmup for 20 seconds to ensure recordings don't start at a zero state
         print("Warming up scenario...")
         thread = threading.Thread(target=(lambda: self.vehicle_update_tick.start(2*const.TOTAL_FRAMES)), daemon=True)
@@ -173,11 +173,11 @@ class Scheduler:
         self.threads.append(self.fsm.writer)
 
         # Start recorder
-        #audio_data = recorder.AudioRec(tick=self.tick, fsm=self.fsm)
+        audio_data = recorder.AudioRec(tick=self.tick, fsm=self.fsm)
 
         # FFT compute thread for audio feature extraction
-        #audio_data.fft_thread.start()
-        #self.threads.append(audio_data.fft_thread)
+        audio_data.fft_thread.start()
+        self.threads.append(audio_data.fft_thread)
 
         #self.tick.external_clock = True
         self.tick.start(const.TOTAL_FRAMES)
@@ -187,7 +187,7 @@ class Scheduler:
         if audio_data is not None:
             audio_data.stop()
         print("Scenario ended")
-        self.simulation.dispatcher.send(self.simulation.beamng.control.pause)
+        self.simulation.beamng.control.pause()
 
     # Cleanup for the threads
     def stop_all(self):
