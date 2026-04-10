@@ -1,7 +1,6 @@
 from beamngpy import BeamNGpy, Scenario
 from beamngpy.logging import BNGDisconnectedError
-from run import scheduler, dispatcher
-import threading
+from run import scheduler
 from spawns import vehicles
 from time import sleep
 import random
@@ -33,14 +32,7 @@ class Simulation:
                 open_beamng(counter)
 
         open_beamng(0)
-
-        self.on = True
         self.beamng.settings.set_nondeterministic()
-        #self.beamng.settings.set_deterministic(400)
-        # Serializes calls for BeamNG, with a check for the simulation being on
-        self.dispatcher = dispatcher.Dispatcher(lambda: self.on)
-        self.dispatcher_thread = threading.Thread(target=self.dispatcher.run, daemon=True)
-        self.dispatcher_thread.start()
 
     # Selects a random weather preset, not sure about all the options
     def random_weather_setup(self):
@@ -72,7 +64,7 @@ class Simulation:
                 self.beamng.scenario.stop()  
         except:  
             pass  
-
+        # Doesn't cleanup really, needs to be fixed
         try:  
             scenarios = self.beamng.scenario.get_level_scenarios(level_name)  
             for scenario in scenarios:  
@@ -82,8 +74,6 @@ class Simulation:
                     break  
         except Exception as e:  
             print(f"Failed to delete scenario {scenario_name}: {e}")  
-
-
 
     def scenario_setup(self, count, ai=True):
         # Environment choice
@@ -125,8 +115,8 @@ class Simulation:
     def simulation_traffic_setup(self):
         # Traffic API is problematic spawning method, so I have to do this manually now
         n_traffic_rand = random.randint(const.MINIMUM_TRAFFIC_VEHICLES, const.MAXIMUM_TRAFFIC_VEHICLES)
-        # Sets what vehicles can be controlled and given sound events within the maximum range
-        control_count =  (n_traffic_rand % const.MAXIMUM_CONTROLLABLE_VEHICLES) + 1
+        control_count = const.MAXIMUM_CONTROLLABLE_VEHICLES
+
         # Used to add delays between spawns to help out the Lua GE
         print("Number of traffic vehicles: " + str(n_traffic_rand) + ". Setting up traffic vehicles.")
             
@@ -142,7 +132,7 @@ class Simulation:
 
         # Spawns a random number of emergency vehicles based on the constants defined
         n_police_rand = random.randint(const.MINIMUM_EMERGENCY_VEHICLES, const.MAXIMUM_EMERGENCY_VEHICLES)
-        control_count =  (n_police_rand % const.MAXIMUM_CONTROLLABLE_VEHICLES) + 1
+        control_count = const.MAXIMUM_CONTROLLABLE_VEHICLES
 
         print("Number of emergency vehicles: " + str(n_police_rand) + ". Setting up emergency vehicles.")
         for i in range(n_police_rand):
@@ -157,23 +147,19 @@ class Simulation:
             print(f"Emergency vehicle {vehicle_ref.vid} successfully spawned")  
 
     # Stops all events, deletes the scenario, and despawns all vehicles if possible
-    def scenario_cleanup(self):
-        self.dispatcher.clear()    
+    def scenario_cleanup(self):  
         if hasattr(self, 'event_scheduler') and self.event_scheduler is not None:
             self.event_scheduler.stop_all()
             self.event_scheduler = None
         if hasattr(self, '_spawned_vehicles'):
             self._spawned_vehicles.clear()
         if hasattr(self, 'scenario') and self.scenario is not None:
-            self.beamng.scenario.stop
+            self.beamng.scenario.stop()
             sleep(1.0)
-            self.scenario.delete, self.beamng
+            self.scenario.delete(self.beamng)
             self.scenario = None  
 
     # Closes the connection to BeamNG and stops the dispatcher thread that recieves the commands
     def close(self):
-        self.dispatcher.clear()
-        self.beamng.close
-        self.on = False
-        self.dispatcher_thread.join(timeout=10.0)
+        self.beamng.close()
         

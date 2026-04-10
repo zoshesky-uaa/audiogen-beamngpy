@@ -16,9 +16,7 @@ class builder:
         self.ev_count = 0
     
     def get_road_network(self):
-        road_network = self.simulation.dispatcher.send_sync(
-            self.simulation.beamng.scenario.get_road_network
-        )
+        road_network = self.simulation.beamng.scenario.get_road_network()
 
         self.roads = [
             road for road in road_network.values() 
@@ -91,10 +89,6 @@ class builder:
         self.simulation.scenario.add_vehicle(driver, pos=spawn[0], rot_quat=spawn[1], cling=True)
         self.driver_ref = Vehicle_Reference(driver, self.simulation.event_scheduler.vehicle_update_tick, self.simulation.beamng, control=True, driver=True)
         self.simulation.event_scheduler.append_event(99, ai=ai)
-
-    # Secondary thread operation
-    def switch_to_driver(self):
-        self.simulation.dispatcher.send(self.simulation.beamng.vehicles.switch, self.driver_ref.vehicle)
 
     def random_EV(self):
         return random.choice(EV)

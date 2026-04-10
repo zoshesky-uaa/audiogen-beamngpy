@@ -28,7 +28,6 @@ class VehicleSoundEvent:
             self.empty_action()
             return
         self.simulation = simulation
-        self.dispatcher = simulation.dispatcher
         self.driver_ref = simulation.vehicle_controller.driver_ref
         self.vehicle_ref = vehicle_ref
         self.run()
@@ -43,10 +42,10 @@ class VehicleSoundEvent:
         #self.main_tick.waited_action_iterate()
 
     def normal_behavior(self):
-        self.dispatcher.send(self.vehicle_ref.vehicle.ai.set_mode, "traffic")
-        self.dispatcher.send(self.vehicle_ref.vehicle.ai.set_aggression, 0.2)
-        self.dispatcher.send(self.vehicle_ref.vehicle.ai.drive_in_lane, True)
-    
+        self.vehicle_ref.vehicle.ai.set_mode("traffic")
+        self.vehicle_ref.vehicle.ai.set_aggression(0.2)
+        self.vehicle_ref.vehicle.ai.drive_in_lane(True)
+
     '''
     # Horns can't be triggered directly via BeamNGpy, we will need to use Lua GE commands for this
     def random_honk_event(self):
