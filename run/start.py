@@ -44,7 +44,7 @@ class Simulation:
         #self.beamng.env.set_weather_preset(self.current_weather, time=5)
 
     def create_temp_folder(self):
-        # Creates a temporary folder for the current scenario to store the data, will be deleted after the scenario is done
+        # Creates a temporary folder for the current scenario to store the data
         self.temp_folder = f"beamngpy"
         if not os.path.exists(self.temp_folder):
             os.makedirs(self.temp_folder)
