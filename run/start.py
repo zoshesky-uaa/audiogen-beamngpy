@@ -11,7 +11,7 @@ import os
 class Simulation:
     def __init__(self):
         self.create_temp_folder()
-        # BeamNGpy connection setup, debug mode enabled writes a tech log to %LOCALAPPDATA%\BeamNG.tech\<version>\
+        # BeamNGpy connection setup
         self.beamng = BeamNGpy(
             host="localhost",        
             port=25252,           
