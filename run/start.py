@@ -147,8 +147,6 @@ class Simulation:
         if hasattr(self, 'event_scheduler') and self.event_scheduler is not None:
             self.event_scheduler.stop_all()
             self.event_scheduler = None
-        if hasattr(self, '_spawned_vehicles'):
-            self._spawned_vehicles.clear()
         if hasattr(self, 'scenario') and self.scenario is not None:
             self.beamng.scenario.stop()
             sleep(1.0)
@@ -157,5 +155,6 @@ class Simulation:
 
     # Closes the connection to BeamNG and stops the dispatcher thread that recieves the commands
     def close(self):
+        self.scenario_cleanup()
         self.beamng.close()
         
