@@ -1,7 +1,9 @@
+import os
+
 # Configuration constants for the simulation
 
-# Path to BeamNG.tech installation directory. Update this path to match your local setup.
-BEAMNG_LOCATION = r"E:\BeamNG.tech.v0.38.3.0"
+# Optional BeamNG home override. Leave unset for automatic discovery.
+BEAMNG_LOCATION = os.environ.get("BEAMNG_LOCATION")
 
 # Defines whether the simulation is in training mode (AI-controlled) or not (human-controlled)
 TRAINING = True
@@ -29,13 +31,11 @@ TOTAL_FRAMES = int(SIMULATION_DURATION_SECONDS * TICK_RATE)
 MAXIMUM_CONTROLLABLE_VEHICLES = 5
 
 # Simulation configuration
-MINIMUM_TRAFFIC_VEHICLES = 5
-MAXIMUM_TRAFFIC_VEHICLES = 25
-MINIMUM_EMERGENCY_VEHICLES = 5
-MAXIMUM_EMERGENCY_VEHICLES = 10
+MINIMUM_TRAFFIC_VEHICLES = 8
+MAXIMUM_TRAFFIC_VEHICLES = 12
+MINIMUM_EMERGENCY_VEHICLES = 4
+MAXIMUM_EMERGENCY_VEHICLES = 6
 MAXIMUM_SPAWN_WAIT_TIME_SECONDS = 120
 NUMBER_OF_SOUND_CLASSES = 2
 
 MAXIMUM_VEHICLES = MAXIMUM_CONTROLLABLE_VEHICLES * NUMBER_OF_SOUND_CLASSES
-
-
