@@ -1,4 +1,5 @@
 from time import sleep, time
+import json
 import os
 import random
 
@@ -9,6 +10,12 @@ import const
 from run.beamng_home import BeamNGHomeNotFound, resolve_beamng_home
 from run import scheduler
 from spawns import vehicles, west_coast_usa
+
+
+BEAMNG_USER_FOLDER = "beamng_user"
+STABLE_USER_SETTINGS = {
+    "SkipGenerateLicencePlate": True,
+}
 
 
 class Simulation:
@@ -43,6 +50,7 @@ class Simulation:
         self.on = True
         self.beamng.settings.set_nondeterministic()
         self.scenario_run_id = int(time() * 1000)
+        self.current_time = "noon"
         self.event_scheduler = None
         self.scenario = None
         self.vehicle_controller = None
@@ -71,9 +79,29 @@ class Simulation:
         # self.beamng.env.set_weather_preset(self.current_weather, time=5)
 
     def create_temp_folder(self):
-        self.temp_folder = "beamngpy"
-        if not os.path.exists(self.temp_folder):
-            os.makedirs(self.temp_folder)
+        self.temp_folder = os.path.abspath(BEAMNG_USER_FOLDER)
+        os.makedirs(self.temp_folder, exist_ok=True)
+        self._ensure_stable_user_settings()
+
+    def _ensure_stable_user_settings(self):
+        settings_dir = os.path.join(self.temp_folder, "current", "settings")
+        os.makedirs(settings_dir, exist_ok=True)
+        settings_path = os.path.join(settings_dir, "settings.json")
+
+        settings = {}
+        if os.path.exists(settings_path):
+            try:
+                with open(settings_path, "r", encoding="utf-8") as settings_file:
+                    loaded_settings = json.load(settings_file)
+                    if isinstance(loaded_settings, dict):
+                        settings = loaded_settings
+            except (OSError, json.JSONDecodeError) as e:
+                print(f"Could not read BeamNG settings; rewriting stable defaults: {e}")
+
+        settings.update(STABLE_USER_SETTINGS)
+        with open(settings_path, "w", encoding="utf-8") as settings_file:
+            json.dump(settings, settings_file, indent=2)
+            settings_file.write("\n")
 
     def random_tod_setup(self):
         time_presets = ["morning", "noon", "evening", "night"]
@@ -157,17 +185,19 @@ class Simulation:
 
         self.scenario.make(self.beamng)
         self.beamng.scenario.load(self.scenario)
-        self.event_scheduler.transition_to_scenario()
         self.beamng.scenario.start()
-        self.beamng.control.pause()
 
         self.random_weather_setup()
-        self.random_tod_setup()
+        # BeamNG.tech can block on env.set_tod(...) after scenario.start().
+        # Keep disabled until TOD is applied via a safer pre-start/scenario path.
+        # self.random_tod_setup()
         self.convert_to_imperial()
+        self.event_scheduler.transition_to_scenario()
         print("Scenario started.")
 
         self.vehicle_controller.get_road_network()
         self.simulation_traffic_setup()
+        self.vehicle_controller.arm_driver_ai(ai=ai)
 
     def simulation_traffic_setup(self):
         n_traffic_rand = random.randint(const.MINIMUM_TRAFFIC_VEHICLES, const.MAXIMUM_TRAFFIC_VEHICLES)
@@ -192,7 +222,8 @@ class Simulation:
                 if vehicle_ref is not None:
                     self._background_traffic.append(vehicle_ref.vehicle)
             if vehicle_ref is not None:
-                vehicle_ref.vehicle.ai.set_mode("traffic")
+                # Do not set traffic AI mode during setup; this can block BeamNGpy.
+                # TrafficEvent applies behavior after the scenario scheduler is running.
                 print(f"Traffic vehicle {vehicle_ref.vid} successfully spawned")
 
         n_police_rand = random.randint(const.MINIMUM_EMERGENCY_VEHICLES, const.MAXIMUM_EMERGENCY_VEHICLES)
