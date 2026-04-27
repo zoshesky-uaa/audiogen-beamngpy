@@ -1,100 +1,115 @@
 import math
 import random
+
 import const
-import queue
-from beamngpy.sensors import AdvancedIMU
-"""
-SoundEvent class to represent audio events in the simulation
-Class Events:
-1 = Other Vehicles Prescence
-2 = Horn
-3 = Siren
-"""
+
 
 class VehicleSoundEvent:
-    def __init__(self,
-                 simulation, 
-                 class_index, 
-                 track_index, 
-                 fsm,
-                 vehicle_ref, 
-                 vehicle_update_tick,
-                 main_tick):
+    def __init__(
+        self,
+        simulation,
+        class_index,
+        track_index,
+        fsm,
+        vehicle_ref,
+        vehicle_update_tick,
+        main_tick,
+    ):
         self.class_index = class_index
         self.track_index = track_index
         self.vehicle_update_tick = vehicle_update_tick
         self.main_tick = main_tick
         self.fsm = fsm
-        # Catch for empty vehicles to let them send empty resets
-        if vehicle_ref is None:
-            self.empty_action()
-            return
         self.simulation = simulation
         self.driver_ref = simulation.vehicle_controller.driver_ref
         self.vehicle_ref = vehicle_ref
+        if vehicle_ref is None:
+            self.empty_action()
+            return
         self.run()
- 
+
     def empty_action(self):
         self.main_tick.waited_action_iterate(self.write_reset)
 
     def run(self):
-        # Delays until warmup is started
-        self.main_tick.waited_action(self.normal_behavior)    
-        # Lambda to select either an empty event or siren event, passed to waited_action_iterate
-        action = lambda: random.choices([self.random_empty, self.random_siren_event],
-                                    weights=[0.50, 0.50], k=1)[0]()
+        self.main_tick.waited_action(self.normal_behavior)
+        action = lambda: random.choices(
+            [self.random_empty, self.random_siren_event],
+            weights=[0.50, 0.50],
+            k=1,
+        )[0]()
         self.main_tick.waited_action_iterate(action)
-    
+
     def normal_behavior(self):
-        # Sets some "normal" conditions for the vehicle
-        # Lightbar condition is what controls the siren state, 0 is off, 1 is on but not audible, 2 is on and audible.
+        if not getattr(self.vehicle_ref, "alive", True):
+            return
         self.vehicle_ref.vehicle.set_lights(lightbar=0)
         self.vehicle_ref.vehicle.ai.set_mode("traffic")
         self.vehicle_ref.vehicle.ai.set_aggression(0.1)
         self.vehicle_ref.vehicle.ai.drive_in_lane(True)
-        #self.vehicle_ref.vehicle.ai.set_speed(15.65, mode="limit")
+
+    def _has_position_data(self):
+        return (
+            getattr(self.vehicle_ref, "alive", True)
+            and getattr(self.driver_ref, "alive", True)
+            and getattr(self.vehicle_ref, "state_available", True)
+            and getattr(self.driver_ref, "state_available", True)
+        )
 
     def random_siren_event(self):
-        position = self.position_data()
-        
-        # Random duration between 10-60 seconds with 100ms hops, using vehicle update tick
-        event_end_frame = self.vehicle_update_tick.frame_index + math.floor(random.uniform(10*2*const.TICK_RATE, 60*2*const.TICK_RATE))
-        
-        # When the vehicle is within an audible range (not defined exactly) it'll trigger a siren event
-        # Otherwise, it writes a reset and simply heads towards the player so its closer for the next event
-        if (position < 400 and position != 0):
-            print(f"CE({self.class_index}), TE({self.track_index}): Starting siren event at vehicle frame {self.vehicle_update_tick.frame_index}, at distance {position:.2f} m.")
-            #Setup random siren behavior here
+        if not self._has_position_data():
+            self.write_reset()
+            return
+        distance = self.position_data()
+        event_end_frame = self.main_tick.frame_index + math.floor(
+            random.uniform(10 * const.TICK_RATE, 60 * const.TICK_RATE)
+        )
+
+        action = None
+        if distance < 400 and distance != 0:
+            print(
+                f"CE({self.class_index}), TE({self.track_index}): "
+                f"Starting siren event at recording frame {self.main_tick.frame_index}, "
+                f"at distance {distance:.2f} m."
+            )
             self.vehicle_ref.vehicle.set_lights(lightbar=2)
-            behaviors = [  
-                lambda: self.follow(event_end_frame),  
+            behaviors = [
+                lambda: self.follow(event_end_frame),
                 lambda: (
-                    self.vehicle_ref.vehicle.ai.set_mode("random"),  
+                    self.vehicle_ref.vehicle.ai.set_mode("random"),
                     self.vehicle_ref.vehicle.ai.set_aggression(0.1),
-                    self.vehicle_ref.vehicle.ai.drive_in_lane(True)        
-                )
+                    self.vehicle_ref.vehicle.ai.drive_in_lane(True),
+                ),
             ]
-            behavior = random.choices(behaviors, weights=[0.5, 0.5], k=1)[0]    
-            behavior()
-            action = lambda: self.write_event()
-            self.vehicle_update_tick.waited_action_iterate(action, max_frame=event_end_frame)
-        elif position != 0:
-            print(f"CE({self.class_index}), TE({self.track_index}): Starting light follow at vehicle frame {self.vehicle_update_tick.frame_index}, at distance {position:.2f} m.")
+            random.choices(behaviors, weights=[0.5, 0.5], k=1)[0]()
+            action = self.write_event
+        else:
+            print(
+                f"CE({self.class_index}), TE({self.track_index}): "
+                f"Starting light follow at recording frame {self.main_tick.frame_index}, "
+                f"at distance {distance:.2f} m."
+            )
             self.vehicle_ref.vehicle.set_lights(lightbar=0)
             self.follow(event_end_frame)
             self.write_reset()
-            self.vehicle_update_tick.waited_action_iterate(max_frame=event_end_frame)
-        
+
+        self.main_tick.waited_action_iterate(action, max_frame=event_end_frame)
 
     def random_empty(self):
+        if not getattr(self.vehicle_ref, "alive", True) or not getattr(self.driver_ref, "alive", True):
+            self.write_reset()
+            return
         self.normal_behavior()
-        # Random duration between 5-30 seconds with 100ms hops, using vehicle update tick
-        print(f"CE({self.class_index}), TE({self.track_index}): Starting empty event at vehicle frame {self.vehicle_update_tick.frame_index}.")
-        event_end_frame = self.vehicle_update_tick.frame_index + math.floor(random.uniform(5*2*const.TICK_RATE, 30*2*const.TICK_RATE))
+        print(f"CE({self.class_index}), TE({self.track_index}): Starting empty event at recording frame {self.main_tick.frame_index}.")
+        event_end_frame = self.main_tick.frame_index + math.floor(
+            random.uniform(5 * const.TICK_RATE, 30 * const.TICK_RATE)
+        )
         self.write_reset()
-        self.vehicle_update_tick.waited_action_iterate(max_frame=event_end_frame)
+        self.main_tick.waited_action_iterate(max_frame=event_end_frame)
 
-    def position_data(self, relative=False):   
+    def position_data(self, relative=False):
+        if not self._has_position_data():
+            return (0.0, 0.0, 0.0) if relative else 0.0
         current_state = self.vehicle_ref.state
         current_state_driver = self.driver_ref.state
         dx = current_state_driver.position[0] - current_state.position[0]
@@ -103,41 +118,47 @@ class VehicleSoundEvent:
         magnitude = math.sqrt(dx**2 + dy**2 + dz**2)
         if relative and magnitude > 0.0:
             return (dx / magnitude, dy / magnitude, dz / magnitude)
-        elif relative:
+        if relative:
             return (0.0, 0.0, 0.0)
-        else:
-            return (magnitude)
+        return magnitude
 
-    def follow(self , end_frame):
+    def follow(self, end_frame):
+        if not self._has_position_data():
+            return
         follower_state = self.vehicle_ref.state
         followed_state = self.driver_ref.state
-  
-        wp1 = {  
-            'x': follower_state.position[0],  
-            'y': follower_state.position[1],   
-            'z': follower_state.position[2],  
-            't': 0.0  
-        }  
+        duration = max(0.0, (end_frame - self.main_tick.frame_index) * const.TICK_DURATION_SECONDS)
 
-        wp2 = {  
-            'x': followed_state.position[0],  
-            'y': followed_state.position[1],   
-            'z': followed_state.position[2],  
-            't': (const.TICK_DURATION_SECONDS*end_frame- self.main_tick.frame_index*const.TICK_DURATION_SECONDS)  
+        wp1 = {
+            "x": follower_state.position[0],
+            "y": follower_state.position[1],
+            "z": follower_state.position[2],
+            "t": 0.0,
+        }
+        wp_mid = {
+            "x": (follower_state.position[0] + followed_state.position[0]) * 0.5,
+            "y": (follower_state.position[1] + followed_state.position[1]) * 0.5,
+            "z": (follower_state.position[2] + followed_state.position[2]) * 0.5,
+            "t": duration * 0.5,
+        }
+        wp2 = {
+            "x": followed_state.position[0],
+            "y": followed_state.position[1],
+            "z": followed_state.position[2],
+            "t": duration,
         }
 
-        self.vehicle_ref.vehicle.ai.drive_using_waypoints(  
-            wp_target_list=[wp1, wp2],  
-            aggression=0.5,  
-            avoid_cars=True,  
-            drive_in_lane=False,  
-        )  
+        self.vehicle_ref.vehicle.ai.set_script([wp1, wp_mid, wp2])
 
     def write_event(self):
+        if self.main_tick.shutdown.is_set():
+            return
         position = self.position_data(relative=True)
-        msg = ((self.main_tick.frame_index, self.class_index, self.track_index), position[0], position[1], position[2])
-        self.fsm.labelqueue.append(msg)
-    
+        msg = (self.main_tick.frame_index, position[0], position[1], position[2])
+        self.fsm.labelqueue[self.class_index][self.track_index].append(msg)
+
     def write_reset(self):
-        msg = ((self.main_tick.frame_index, self.class_index, self.track_index),  0.0, 0.0, 0.0)
-        self.fsm.labelqueue.append(msg)
+        if self.main_tick.shutdown.is_set():
+            return
+        msg = (self.main_tick.frame_index, 0.0, 0.0, 0.0)
+        self.fsm.labelqueue[self.class_index][self.track_index].append(msg)
