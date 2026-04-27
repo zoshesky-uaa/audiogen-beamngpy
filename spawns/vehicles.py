@@ -261,10 +261,24 @@ class builder:
         )
         if self.driver_ref.thread is not None:
             self.simulation.event_scheduler.threads.append(self.driver_ref.thread)
-        self.simulation.event_scheduler.append_event(99, ai=ai)
 
     def switch_to_driver(self):
         self.simulation.beamng.vehicles.switch(self.driver_ref.vehicle)
+
+    def arm_driver_ai(self, ai=True):
+        if not ai:
+            return
+        if self.driver_ref is None or not getattr(self.driver_ref, "alive", True):
+            return
+
+        vehicle = self.driver_ref.vehicle
+        self.simulation.beamng.vehicles.switch(vehicle)
+        if self.simulation.current_time != "noon":
+            vehicle.set_lights(headlights=1)
+        vehicle.ai.set_mode("traffic")
+        vehicle.ai.set_aggression(0.2)
+        vehicle.ai.drive_in_lane(True)
+        print("Driver AI armed.")
 
     def random_EV(self):
         return random.choice(EV)
