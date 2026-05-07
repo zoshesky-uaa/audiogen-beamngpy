@@ -174,20 +174,25 @@ class builder:
         except Exception as e:
             print(f"Failed to close rejected vehicle {vehicle.vid}: {e}")
 
-    def vehicle_spawn(self, EV=False, control=False):
-        if EV:
-            template = self.random_EV()
-            vehicle_vid = template.vid + f" EV_{self.ev_count}"
-            self.ev_count += 1
-        elif control:
-            template = self.random_vehicle()
-            vehicle_vid = template.vid + f" TV_{self.traffic_count}"
-            self.traffic_count += 1
-        else:
-            template = self.random_traffic()
-            vehicle_vid = template.vid + f" TV_{self.traffic_count}"
-            self.traffic_count += 1
-
+    def vehicle_spawn(self, sound_class=999, control=False):
+        match sound_class:
+            case 0:
+                template = random.choice(FIRE)
+                vehicle_vid = template.vid + f" EV_{self.ev_count}"
+                self.ev_count += 1
+            case 1:
+                template = random.choice(POLICE)
+                vehicle_vid = template.vid + f" EV_{self.ev_count}"
+                self.ev_count += 1
+            case 2:
+                template = random.choice(AMBULANCE)
+                vehicle_vid = template.vid + f" EV_{self.ev_count}"
+                self.ev_count += 1
+            case _:
+                template = random.choice(OTHER)
+                vehicle_vid = template.vid + f" TV_{self.traffic_count}"
+                self.traffic_count += 1
+         
         vehicle_license = template.options.get("licenseText") or template.options.get("license") or template.options.get("licence")
         for attempt in range(MAX_SPAWN_SEGMENT_ATTEMPTS):
             vehicle = Vehicle(
@@ -247,7 +252,7 @@ class builder:
         # Driver must have a position before the scenario is loaded and loaded before scenario is made,
         # So therefore I had to extract random positions, getting a better list is ideal
         spawn = self.simulation.environment.random_location()
-        driver = self.random_vehicle()
+        driver = random.choice(NORMAL)
         # Store the driver reference
         self.simulation.scenario.add_vehicle(driver, pos=spawn[0], rot_quat=spawn[1], cling=True)
         self.accepted_spawn_positions.append(spawn[0])
@@ -279,15 +284,6 @@ class builder:
         vehicle.ai.set_aggression(0.2)
         vehicle.ai.drive_in_lane(True)
         print("Driver AI armed.")
-
-    def random_EV(self):
-        return random.choice(EV)
-
-    def random_vehicle(self):
-        return random.choice(NORMAL)
-
-    def random_traffic(self):
-        return random.choice(OTHER)
 
 VehicleState = namedtuple('VehicleState', ['position', 'velocity', 'steering', 'braking', 'damage', 'lane_data'])
 class Vehicle_Reference:
@@ -419,43 +415,42 @@ class Vehicle_Reference:
         self.poll_timeout_reported = False
         self.next_state_poll_frame = current_frame + self.state_poll_interval
 
-EV = [
-    Vehicle('(Vehicle) Wydra Rescue (CVT)', model='atv', part_config='vehicles/atv/rescue.pc', licence='EV'),
-    Vehicle('(Vehicle) Bolide 350 Polizia (M)', model='bolide', part_config='vehicles/bolide/polizia.pc', licence='EV'),
-    Vehicle('(Vehicle) FCV Vivace Polizia (M)', model='vivace', part_config='vehicles/vivace/vivace_polizia.pc', licence='EV'),
-    Vehicle('(Vehicle) FCV Vivace S Gendarmerie (DCT)', model='vivace', part_config='vehicles/vivace/vivace_S_gendarmerie.pc', licence='EV'),
-    Vehicle('(Vehicle) FCV Tograc Polizia (M)', model='vivace', part_config='vehicles/vivace/tograc_polizia.pc', licence='EV'),
-    Vehicle('(Vehicle) Hopper Carabinieri (M)', model='hopper', part_config='vehicles/hopper/carabinieri.pc', licence='EV'),
+
+POLICE = [
     Vehicle('(Vehicle) Hopper Sheriff (M)', model='hopper', part_config='vehicles/hopper/sheriff.pc', licence='EV'),
-    Vehicle('(Vehicle) Scintilla GTs Polizia (DCT)', model='scintilla', part_config='vehicles/scintilla/gts_polizia.pc', licence='EV'),
     Vehicle('(Vehicle) Pessima Police (A)', model='midsize', part_config='vehicles/midsize/police.pc', licence='EV'),
     Vehicle('(Vehicle) Covet Police (A)', model='covet', part_config='vehicles/covet/police.pc', licence='EV'),
     Vehicle('(Vehicle) Wendover Police Interceptor (A)', model='wendover', part_config='vehicles/wendover/interceptor.pc', licence='EV'),
     Vehicle('(Vehicle) Bluebuck Police Package (A)', model='bluebuck', part_config='vehicles/bluebuck/police.pc', licence='EV'),
     Vehicle('(Vehicle) Bluebuck Police Interceptor (A)', model='bluebuck', part_config='vehicles/bluebuck/interceptor.pc', licence='EV'),
-    Vehicle('(Vehicle) D-Series D45 Off-Road Ambulance (A)', model='pickup', part_config='vehicles/pickup/d45_diesel_4wd_ambulance_A.pc', licence='EV'),
     Vehicle('(Vehicle) Special 313 V8 4-Door Sedan Police Package (A)', model='burnside', part_config='vehicles/burnside/4door_late_v8_3A_police.pc', licence='EV'),
-    Vehicle('(Vehicle) Roamer Fire Chief (A)', model='roamer', part_config='vehicles/roamer/firechief.pc', licence='EV'),
     Vehicle('(Vehicle) Roamer Belasco City Police Department (A)', model='roamer', part_config='vehicles/roamer/police.pc', licence='EV'),
     Vehicle('(Vehicle) Roamer LXT35 Police Package (Unmarked) (A)', model='roamer', part_config='vehicles/roamer/unmarked.pc', licence='EV'),
     Vehicle('(Vehicle) Roamer Sheriff (A)', model='roamer', part_config='vehicles/roamer/sheriff.pc', licence='EV'),
     Vehicle('(Vehicle) MD-Series MD60 Armored Police (M)', model='md_series', part_config='vehicles/md_series/md_60_armored_police.pc', licence='EV'),
-    Vehicle('(Vehicle) MD-Series MD70 Ambulance 4WD (M)', model='md_series', part_config='vehicles/md_series/md_70_ambulance_4wd.pc', licence='EV'),
-    Vehicle('(Vehicle) MD-Series MD60 Ambulance (A)', model='md_series', part_config='vehicles/md_series/md_60_ambulance.pc', licence='EV'),
     Vehicle('(Vehicle) Bastion Police (Unmarked) 5.7 AWD (A)', model='bastion', part_config='vehicles/bastion/police_unmarked_v8_awd_A.pc', licence='EV'),
     Vehicle('(Vehicle) Bastion Police 5.7 AWD (A)', model='bastion', part_config='vehicles/bastion/police_v8_awd_A.pc', licence='EV'),
-    Vehicle('(Vehicle) LeGran Fire Chief (Facelift) (A)', model='legran', part_config='vehicles/legran/firechief.pc', licence='EV'),
     Vehicle('(Vehicle) Grand Marshal Belasco City Police Department (A)', model='fullsize', part_config='vehicles/fullsize/bcpd.pc', licence='EV'),
     Vehicle('(Vehicle) Grand Marshal Police Package (Unmarked) (A)', model='fullsize', part_config='vehicles/fullsize/unmarked.pc', licence='EV'),
     Vehicle('(Vehicle) Grand Marshal Police Package (A)', model='fullsize', part_config='vehicles/fullsize/police.pc', licence='EV'),
-    Vehicle('(Vehicle) D-Series D45 Ambulance (A)', model='pickup', part_config='vehicles/pickup/d45_ambulance_A.pc', licence='EV'),
-    Vehicle('(Vehicle) Sunburst Polizia (DCT)', model='sunburst2', part_config='vehicles/sunburst2/polizia.pc', licence='EV'),
-    Vehicle('(Vehicle) Sunburst Gendarmerie (DCT)', model='sunburst2', part_config='vehicles/sunburst2/gendarmerie.pc', licence='EV'),
     Vehicle('(Vehicle) Sunburst Police Package (CVT)', model='sunburst2', part_config='vehicles/sunburst2/police.pc', licence='EV'),
     Vehicle('(Vehicle) Sunburst Police Interceptor (DCT)', model='sunburst2', part_config='vehicles/sunburst2/interceptor.pc', licence='EV'),
     Vehicle('(Vehicle) Lansdale 3.3 S Police (A)', model='lansdale', part_config='vehicles/lansdale/33_police_late_A.pc', licence='EV'),
 ]
 
+AMBULANCE = [
+    Vehicle('(Vehicle) D-Series D45 Off-Road Ambulance (A)', model='pickup', part_config='vehicles/pickup/d45_diesel_4wd_ambulance_A.pc', licence='EV'),
+    Vehicle('(Vehicle) MD-Series MD70 Ambulance 4WD (M)', model='md_series', part_config='vehicles/md_series/md_70_ambulance_4wd.pc', licence='EV'),
+    Vehicle('(Vehicle) MD-Series MD60 Ambulance (A)', model='md_series', part_config='vehicles/md_series/md_60_ambulance.pc', licence='EV'),
+    Vehicle('(Vehicle) D-Series D45 Ambulance (A)', model='pickup', part_config='vehicles/pickup/d45_ambulance_A.pc', licence='EV'),
+]
+
+FIRE = [
+    Vehicle("(Vehicle) Stambecco Stambecco 525-FP (M)", model="midtruck", part_config="vehicles/midtruck/6x6_firetruck_petrol.pc", licence="EV"),
+    Vehicle("(Vehicle) Stambecco Stambecco 525-FP-2 (M)", model="midtruck", part_config="vehicles/midtruck/6x6_firetruck_diesel.pc", licence="EV"),
+    Vehicle("(Vehicle) Roamer Roamer Fire Chief (A)", model="roamer", part_config="vehicles/roamer/firechief.pc", licence="EV"),
+    Vehicle("(Vehicle) LeGran LeGran Fire Chief (Facelift) (A)", model="legran", part_config="vehicles/legran/firechief.pc", licence="EV"),
+]
 
 NORMAL = [
     Vehicle('(Vehicle) H-Series H35 Vanster Long Wheelbase (A)', model='van', part_config='vehicles/van/h35_ext_vanster.pc', licence='DRIVER'),

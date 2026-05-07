@@ -1,9 +1,9 @@
 import threading
 import traceback
 from time import sleep, monotonic
-
+import atexit
 import const
-from run import driver, ev, filesystem, recorder, traffic
+from run import driver, filesystem, soundevent
 
 
 class Tick:
@@ -20,13 +20,9 @@ class Tick:
         with self._cond:
             self.shutdown.clear()
             self.on = True
-            self._cond.notify_all()
 
         endframe = int(endframe)
-        if self.external_clock:
-            with self._cond:
-                self._cond.wait_for(lambda: self.frame_index > endframe or self.shutdown.is_set() or not self.on)
-        else:
+        if not self.external_clock:
             while self.frame_index < endframe and not self.shutdown.is_set() and self.on:
                 self.iterate()
 
@@ -47,20 +43,20 @@ class Tick:
         with self._cond:
             if not self.on:
                 return
-        sleep(self.delay)
         self.advance_frame()
-
+        sleep(self.delay)
+        
     def advance_frame(self):
         with self._cond:
             if not self.on:
                 return
-            self.frame_index += 1
             self._cond.notify_all()
-
+            self.frame_index += 1
+            
     def wait_next(self, last_frame):
         with self._cond:
             self._cond.wait_for(
-                lambda: self.shutdown.is_set() or (self.frame_index > last_frame and self.on)
+                lambda: self.shutdown.is_set() or (self.frame_index != last_frame and self.on)
             )
             if self.shutdown.is_set():
                 return None
@@ -85,9 +81,9 @@ class Tick:
 
 class Scheduler:
     def __init__(self, simulation):
-        self.tick = Tick(delay=const.TICK_DURATION_SECONDS)
-        self.vehicle_update_tick = Tick(delay=const.TICK_DURATION_SECONDS / 2)
-        self.fsm = filesystem.FSM(self.tick, simulation, write_features=True)
+        self.tick = Tick(delay=const.target_res)
+        self.vehicle_update_tick = Tick(delay=const.target_res/3)
+        self.fsm = filesystem.FSM(self.tick, simulation)
         self.simulation = simulation
         self.threads = []
         self.class_events = []
@@ -116,12 +112,6 @@ class Scheduler:
         thread.start()
         return thread
 
-    def finalize_trial(self, valid, reason=None):
-        if valid:
-            self.fsm.finalize_trial()
-        else:
-            self.fsm.invalidate_trial(reason or "trial invalidated")
-
     def append_event(self, class_index, vehicle_ref=None, ai=True):
         match class_index:
             case 99:
@@ -133,22 +123,9 @@ class Scheduler:
                     ai,
                 )
                 failure_label = "Driver recorder thread"
-            case 0:
+            case _:
                 track_index = self.class_events.count(class_index)
-                target = lambda: traffic.VehicleSoundEvent(
-                    self.simulation,
-                    class_index,
-                    track_index,
-                    self.fsm,
-                    vehicle_ref,
-                    self.vehicle_update_tick,
-                    self.tick,
-                )
-                failure_label = f"Traffic event thread {track_index}"
-                self.class_events.append(class_index)
-            case 1:
-                track_index = self.class_events.count(class_index)
-                target = lambda: ev.VehicleSoundEvent(
+                target = lambda: soundevent.VehicleSoundEvent(
                     self.simulation,
                     class_index,
                     track_index,
@@ -159,8 +136,6 @@ class Scheduler:
                 )
                 failure_label = f"Emergency event thread {track_index}"
                 self.class_events.append(class_index)
-            case _:
-                return
         self._start_guarded_thread(failure_label, target, failure_label)
 
     def transition_to_scenario(self):
@@ -179,7 +154,7 @@ class Scheduler:
 
     def simulate(self):
         audio_data = None
-        warmup_frames = int(20 * const.TICK_RATE)
+        warmup_frames = int(5 * const.t_prime) # Warmup for 15s
         if not self.simulation.trial_valid:
             print(f"Scenario aborted: {self.simulation.abort_reason}")
             return
@@ -188,7 +163,7 @@ class Scheduler:
         print("Warming up scenario...")
         self._start_guarded_thread(
             "Vehicle state tick thread",
-            lambda: self.vehicle_update_tick.start(2 * (const.TOTAL_FRAMES + warmup_frames)),
+            lambda: self.vehicle_update_tick.start(2 * (const.label_max + warmup_frames)),
             "Vehicle state tick thread",
         )
         self.tick.start(warmup_frames)
@@ -196,20 +171,105 @@ class Scheduler:
             print(f"Scenario aborted: {self.simulation.abort_reason}")
             self.simulation.beamng.control.pause()
             return
-        self.tick.recording_start_frame = self.tick.frame_index
-
+        
+        
+        self.tick.reset()
         print("Starting scenario loop.")
-        self.fsm.writer.start()
-        self.threads.append(self.fsm.writer)
+        # External lock flip over
+        self.tick.external_clock = True
+        from pathlib import Path
+        import subprocess
+        import json 
+  
+        # Call path for application
+        repo_root = Path(__file__).resolve().parent.parent
+        application_path = (repo_root / const.GEN_BINARY_PATH).resolve()
+        if not application_path.exists():
+            raise FileNotFoundError(f"EXE not found: {application_path}")
+        
+        process = subprocess.Popen(
+            [str(application_path)],
+            cwd=str(repo_root),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,   # Capture terminal output (creates process.stdout stream)
+            stderr=subprocess.STDOUT,  # Merge stderr into stdout for unified reading
+            text=True,
+            bufsize=1
+        )
 
-        audio_data = recorder.AudioRec(tick=self.tick, fsm=self.fsm)
-        self.threads.append(audio_data.fft_thread)
+        def send_exit():
+            if process.poll() is None and process.stdin:
+                try:
+                    process.stdin.write("exit\n")
+                    process.stdin.flush()
+                except (BrokenPipeError, OSError):
+                    pass
 
-        self.tick.start(self.tick.recording_start_frame + const.TOTAL_FRAMES)
+        atexit.register(send_exit)
+        
+        try:
+            process.stdin.write(json.dumps(self.fsm.gen_cmd) + "\n")
+            process.stdin.flush()
+        except (BrokenPipeError, OSError) as e:
+            print(f"Failed to communicate with binary: {e}")
+            self.simulation.invalidate_trial(f"Binary pipe error: {e}", stop_run=True)
+            self.tick.stop()
+            return
+        
+        if process.stdout is None:
+            self.simulation.invalidate_trial("Binary stdout not captured", stop_run=True)
+            self.tick.stop()
+            return
 
-        self.tick.stop()
-        if audio_data is not None:
-            audio_data.stop()
+        compression_ratio = int(const.target_res / const.input_frame_time)
+        started = False
+        try:
+            for line in process.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split(":", 1)
+                prefix = parts[0]
+                match prefix:
+                    case "START":
+                        print("\n[ACCDOA] Intercepted START.")
+                        self.tick.start(const.label_max)
+                        self.fsm.writer.start()
+                        started = True
+
+                    case "END":
+                        print("\n[ACCDOA] Intercepted END. Sequence complete.")
+                        self.tick.stop()
+                        break 
+
+                    case "TICK" if started and len(parts) == 2:
+                        try:
+                            frame_idx = int(parts[1])
+                            if (frame_idx + 1) % compression_ratio == 0:
+                                self.tick.advance_frame()
+                            if frame_idx % 1000 == 0:
+                                print(f"[ACCDOA] Progress: {frame_idx}/{const.frame_max} frames processed...", end='\r', flush=True)
+                        except ValueError:
+                            pass # Safely ignore if it wasn't a clean integer
+
+                    case _ if "error" in line.lower():
+                        print(f"\n[ACCDOA] Reported error: {line}")
+                        self.simulation.invalidate_trial(f"Error: {line}", stop_run=True)
+                        break
+                        
+                    case _:
+                        print(f"\n[ACCDOA]: {line}")
+                        continue
+
+        except Exception as e:
+            print(f"Error reading from binary: {e}")
+            self.simulation.invalidate_trial(f"Binary read error: {e}", stop_run=True)
+        
+        sleep(5)
+        process.poll()
+        if process.returncode is not None and process.returncode != 0:
+            self.simulation.invalidate_trial(f"Binary exited with code {process.returncode}", stop_run=True)
+        self.join_thread(self.fsm.writer)
         print("Scenario ended")
         if not self.simulation.trial_valid:
             print(f"Scenario aborted: {self.simulation.abort_reason}")
@@ -219,14 +279,17 @@ class Scheduler:
         self.tick.stop()
         self.vehicle_update_tick.stop()
         for thread in self.threads:
-            deadline = monotonic() + 10.0
-            while thread.is_alive():
-                remaining = deadline - monotonic()
-                if remaining <= 0:
-                    break
-                try:
-                    thread.join(timeout=min(0.25, remaining))
-                except KeyboardInterrupt:
-                    print(f"Shutdown interrupted while waiting for {thread.name}; continuing cleanup.")
-            if thread.is_alive():
-                print(f"Warning: thread {thread.name} did not stop in time.")
+            self.join_thread(thread)
+
+    def join_thread(self, thread):
+        deadline = monotonic() + 10.0
+        while thread.is_alive():
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                break
+            try:
+                thread.join(timeout=min(0.25, remaining))
+            except KeyboardInterrupt:
+                print(f"Shutdown interrupted while waiting for {thread.name}; continuing cleanup.")
+        if thread.is_alive():
+            print(f"Warning: thread {thread.name} did not stop in time.")

@@ -1,215 +1,193 @@
-from pathlib import Path
+
 from collections import deque
-import re
 import threading
-import traceback
-
-import numpy as np
-import zarr
-
+import z5py
+from pathlib import Path
 import const
-
-
-TRIAL_DIR_PATTERN = re.compile(r"^trial_(\d+)(?:\..+)?$")
-
+import numpy as np
 
 class FSM:
-    def __init__(self, tick, simulation=None, write_features=True):
+    def __init__(self, tick, simulation=None):
         self.write_active = False
         self.tick = tick
         self.simulation = simulation
-        self.trial_name = None
-        self.trial_path = None
-        self.final_trial_path = None
-        self.status_path = None
-        self.completed = False
 
-        self.training_root, self.label_set, self.feature_set = self.create_trial_data(write_features)
-        self.labelqueue = {
-            class_index: {
-                track_index: deque()
-                for track_index in range(const.MAXIMUM_CONTROLLABLE_VEHICLES)
-            }
-            for class_index in range(const.NUMBER_OF_SOUND_CLASSES)
-        }
-        self.featurequeue = deque()
-
-        self.writer = ZarrWriter(
-            self.feature_set,
-            self.label_set,
-            self.tick,
-            self.labelqueue,
-            self.featurequeue,
-            self.simulation,
-        )
-
-    def create_trial_data(self, write_features=True):
-        base_path = Path("trials").resolve()
+        # Iterative zarr path creation, keep ahold of path for zarr label operations
+        project_root = Path(__file__).resolve().parent.parent
+        base_path = (project_root / 'trials').resolve()
         base_path.mkdir(parents=True, exist_ok=True)
 
-        highest_num = 0
-        for child in base_path.iterdir():
-            if not child.is_dir():
-                continue
-            match = TRIAL_DIR_PATTERN.match(child.name)
-            if match is not None:
-                highest_num = max(highest_num, int(match.group(1)))
+        # Find the next available trial index
+        i = 1
+        while (base_path / f"trial_{i}.zarr").exists():
+            i += 1
 
-        self.trial_name = f"trial_{highest_num + 1}"
-        self.final_trial_path = base_path / self.trial_name
-        self.trial_path = base_path / f"{self.trial_name}.incomplete"
-        self.status_path = self.trial_path / "trial_status.txt"
-        print(f"Writing to folder: {self.trial_path.name}")
-        self.trial_path.mkdir()
-        self._write_status("incomplete")
+        root_group = z5py.File(base_path / f"trial_{i}.zarr", use_zarr_format=True)
+        print(f"Created Zarr file at: {(base_path / f'trial_{i}.zarr').as_posix()}")
+        # Create labelsets
+        sed_labelset = root_group.create_dataset("sed_labels", 
+                                    dtype="float32", 
+                                    shape=(const.sed_label_buffer_dim[0], const.label_max, const.sed_label_buffer_dim[2]), 
+                                    chunks=const.sed_label_buffer_dim,
+                                    compression='blosc',  
+                                    codec='zstd',
+                                    fillvalue=0.0,   
+                                    clevel=3,  
+                                    shuffle=1,  
+                                    blocksize=0)
+        
+        doa_labelset = root_group.create_dataset("doa_labels", 
+                                    dtype="float32", 
+                                    shape=(const.doa_label_buffer_dim[0], const.label_max, const.doa_label_buffer_dim[2]), 
+                                    chunks=const.doa_label_buffer_dim,
+                                    compression='blosc',  
+                                    codec='zstd',   
+                                    fillvalue=0.0,
+                                    clevel=3,  
+                                    shuffle=1,  
+                                    blocksize=0)
 
-        compressor = zarr.codecs.BloscCodec(
-            cname="zstd",
-            clevel=3,
-            shuffle=zarr.codecs.BloscShuffle.shuffle,
+        self.sed_queue = deque() 
+        self.doa_queue = deque() 
+
+        self.writer = ZarrWriter(
+            self.tick,
+            self.simulation,
+            sed_labelset,
+            doa_labelset,
+            self.sed_queue,
+            self.doa_queue, 
         )
-        training_root = zarr.group(self.trial_path / "training_data.zarr")
-        label_set = training_root.create_array(
-            name="labels",
-            shape=(const.TOTAL_FRAMES + 1, const.NUMBER_OF_SOUND_CLASSES, const.MAXIMUM_CONTROLLABLE_VEHICLES, 3),
-            dtype="f4",
-            chunks=(const.CHUNK_SIZE, const.NUMBER_OF_SOUND_CLASSES, const.MAXIMUM_CONTROLLABLE_VEHICLES, 3),
-            compressors=compressor,
-        )
-
-        feature_set = None
-        if write_features:
-            feature_set = training_root.create_array(
-                name="features",
-                shape=(const.TOTAL_FRAMES + 1, const.N_INPUTS, const.N_BINS),
-                dtype="f4",
-                chunks=(const.CHUNK_SIZE, const.N_INPUTS, const.N_BINS),
-                compressors=compressor,
-            )
-
-        return training_root, label_set, feature_set
-
-    def _write_status(self, status, reason=None):
-        lines = [f"status={status}"]
-        if reason:
-            lines.append(f"reason={reason}")
-        self.status_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-    def finalize_trial(self):
-        if self.completed:
-            return
-        if self.trial_path != self.final_trial_path:
-            self.trial_path.rename(self.final_trial_path)
-            self.trial_path = self.final_trial_path
-            self.status_path = self.trial_path / "trial_status.txt"
-        self._write_status("complete")
-        self.completed = True
-        print(f"Finalized trial data: {self.trial_path.name}")
-
-    def invalidate_trial(self, reason):
-        if self.completed:
-            return
-        invalid_path = self.final_trial_path.with_name(f"{self.trial_name}.invalid")
-        if self.trial_path != invalid_path:
-            self.trial_path.rename(invalid_path)
-            self.trial_path = invalid_path
-            self.status_path = self.trial_path / "trial_status.txt"
-        self._write_status("invalid", reason)
-        self.completed = True
-        print(f"Marked trial data invalid: {self.trial_path.name}")
+        
+        self.gen_cmd = {
+            "device_name": const.AUDIO_INPUT_DEVICE_NAME,
+            "zarr_path": str((base_path / f"trial_{i}.zarr").as_posix()),
+        }
 
 
+import heapq
 class ZarrWriter(threading.Thread):
-    def __init__(self, feature_set, label_set, tick, labelqueue, featurequeue, simulation=None):
-        super().__init__(name="Zarr writer", daemon=True)
+    def __init__(self, 
+                tick, 
+                simulation,
+                sed_labelset,
+                doa_labelset, 
+                sed_queue, 
+                doa_queue):
+        super().__init__(name="ZarrWriter", daemon=True)
         self.tick = tick
         self.simulation = simulation
-        self.feature_set = feature_set
-        self.label_set = label_set
-        self.labelqueue = labelqueue
-        self.featurequeue = featurequeue
+        self.sed_labelset = sed_labelset
+        self.doa_labelset = doa_labelset
+
+        self.sed_queue = sed_queue
+        self.doa_queue = doa_queue
+
+        self.chunk_size = const.sed_label_buffer_dim[1]
+        self.sed_chunk_buffer = np.zeros(const.sed_label_buffer_dim, dtype=np.float32)
+        self.doa_chunk_buffer = np.zeros(const.doa_label_buffer_dim, dtype=np.float32)
+        self.write_offset = 0
+
+        self.messenger_registry = {}
+        self.available_slots = {
+            se_idx: list(range(const.track_count)) 
+            for se_idx in range(const.se_count)
+        }
+        for se_idx in self.available_slots:
+            heapq.heapify(self.available_slots[se_idx])
+
         print("ZarrWriter initialized.")
-        self.feature_buffer = np.full((const.CHUNK_SIZE, const.N_INPUTS, const.N_BINS), np.nan, dtype="f4")
-        self.label_buffer = np.zeros((const.CHUNK_SIZE, const.NUMBER_OF_SOUND_CLASSES, const.MAXIMUM_CONTROLLABLE_VEHICLES, 3), dtype="f4")
-        self.last_feature = np.full((const.N_INPUTS, const.N_BINS), np.nan, dtype="f4")
-        self.last_label = np.zeros((const.NUMBER_OF_SOUND_CLASSES, const.MAXIMUM_CONTROLLABLE_VEHICLES, 3), dtype="f4")
-        self.next_flush_frame = const.CHUNK_SIZE
+
+    def _get_or_assign_track(self, se_idx, abstract_id):
+        key = (se_idx, abstract_id)
+        if key in self.messenger_registry:
+            return self.messenger_registry[key]
+        
+        # Assign lowest available track index for this specific class
+        if self.available_slots[se_idx]:
+            assigned_slot = heapq.heappop(self.available_slots[se_idx])
+            self.messenger_registry[key] = assigned_slot
+            return assigned_slot
+        return None 
+
+    def _release_track(self, se_idx, abstract_id):
+        key = (se_idx, abstract_id)
+        if key in self.messenger_registry:
+            slot = self.messenger_registry.pop(key)
+            heapq.heappush(self.available_slots[se_idx], slot)
 
     def run(self):
-        print("ZarrWriter thread started.")
-        try:
-            while True:
-                source_frame = self.tick.frame_index
-                current_frame = source_frame - self.tick.recording_start_frame
-                chunk_start = self.next_flush_frame - const.CHUNK_SIZE
-                local_idx = current_frame % const.CHUNK_SIZE
+            print("ZarrWriter thread started.")
+            current_frame = 0
+            self.tick.wait_next(current_frame)
 
-                for class_index in range(const.NUMBER_OF_SOUND_CLASSES):
-                    for track_index in range(const.MAXIMUM_CONTROLLABLE_VEHICLES):
-                        while True:
-                            try:
-                                msg = self.labelqueue[class_index][track_index].popleft()
-                            except IndexError:
-                                break
-                            record_frame = msg[0] - self.tick.recording_start_frame
-                            self.last_label[class_index, track_index, :] = msg[1:]
-                            if record_frame >= chunk_start:
-                                self.label_buffer[record_frame % const.CHUNK_SIZE, class_index, track_index, :] = msg[1:]
-                        if current_frame >= 0:
-                            self.label_buffer[local_idx, class_index, track_index, :] = self.last_label[class_index, track_index, :]
+            
+            while not self.tick.shutdown.is_set():
+                current_frame = self.tick.frame_index
+                pending_releases = []
+                # --- Drain Global SED Queue ---
+                while self.sed_queue:
+                    # Peek at the oldest item's frame index
+                    if self.sed_queue[0][0] >= self.write_offset + self.chunk_size:
+                        break  # Reached data for the *next* chunk. Stop popping.
+                    
+                    msg_frame, se_idx, abstract_id, val = self.sed_queue.popleft()
+                    
+                    if msg_frame < self.write_offset:
+                        continue  # Discard stale data
+                    
+                    local_t = msg_frame - self.write_offset
+                    track_idx = self._get_or_assign_track(se_idx, abstract_id)
+                    
+                    if track_idx is not None:
+                        # Track major index
+                        flat_idx = (track_idx * const.se_count) + se_idx
+                        self.sed_chunk_buffer[0, local_t, flat_idx] = val
+                        
+                        # Release the assigned track if this is a write_reset signal
+                        if val == 0.0:
+                            pending_releases.append((se_idx, abstract_id))
 
-                if self.feature_set is not None:
-                    while True:
-                        try:
-                            msg = self.featurequeue.popleft()
-                        except IndexError:
-                            break
-                        record_frame = msg[0] - self.tick.recording_start_frame
-                        self.last_feature[:, :] = msg[1]
-                        if record_frame >= chunk_start:
-                            self.feature_buffer[record_frame % const.CHUNK_SIZE, :, :] = msg[1]
-                    if current_frame >= 0:
-                        self.feature_buffer[local_idx, :, :] = self.last_feature
+                # --- Drain Global DOA Queue ---
+                while self.doa_queue:
+                    if self.doa_queue[0][0] >= self.write_offset + self.chunk_size:
+                        break  # Reached data for the *next* chunk. Stop popping.
+                    
+                    # Unpack the 6-item tuple
+                    msg_frame, se_idx, abstract_id, x, y, z = self.doa_queue.popleft()
+                    
+                    if msg_frame < self.write_offset:
+                        continue  # Discard stale data
+                    
+                    local_t = msg_frame - self.write_offset
+                    track_idx = self._get_or_assign_track(se_idx, abstract_id)
+                    
+                    if track_idx is not None:
+                        flat_idx = ((track_idx * const.se_count) + se_idx) * 2
+                        self.doa_chunk_buffer[0, local_t, flat_idx]     = x
+                        self.doa_chunk_buffer[0, local_t, flat_idx + 1] = y
+                        
+                        # Note: We do NOT call _release_track here. 
+                        # Because write_reset fires both SED and DOA messages for the same frame
+                
+                # Safe release after processing 
+                for se_idx, a_id in pending_releases:
+                    self._release_track(se_idx, a_id)
+                    
+                # --- Commit Chunk ---
+                if current_frame >= self.write_offset + self.chunk_size:
+                    self.commit_and_reset()
+                    #print(f"Write Operation Committed: Frames {self.write_offset} to {self.write_offset + self.chunk_size - 1}")
+                self.tick.wait_next(current_frame)
 
-                if current_frame + 1 >= self.next_flush_frame:
-                    self._flush_chunk(self.next_flush_frame - const.CHUNK_SIZE, self.next_flush_frame)
-                    self.next_flush_frame += const.CHUNK_SIZE
-
-                pending_labels = any(
-                    self.labelqueue[class_index][track_index]
-                    for class_index in range(const.NUMBER_OF_SOUND_CLASSES)
-                    for track_index in range(const.MAXIMUM_CONTROLLABLE_VEHICLES)
-                )
-                if self.tick.shutdown.is_set() and not pending_labels and not self.featurequeue:
-                    break
-                self.tick.wait_next(source_frame)
-
-            final_end = (self.tick.frame_index - self.tick.recording_start_frame) + 1
-            while final_end >= self.next_flush_frame:
-                self._flush_chunk(self.next_flush_frame - const.CHUNK_SIZE, self.next_flush_frame)
-                self.next_flush_frame += const.CHUNK_SIZE
-            remainder = final_end % const.CHUNK_SIZE
-            if remainder:
-                self._flush_chunk(final_end - remainder, final_end)
-                print("Final partial chunk flushed.")
-        except Exception as e:
-            if self.simulation is not None and getattr(self.simulation, "on", True) and not self.tick.shutdown.is_set():
-                print(f"ZarrWriter failed: {e}")
-                traceback.print_exc()
-                self.simulation.invalidate_trial(f"Trial writer failed: {e}", stop_run=True)
-
-    def _flush_chunk(self, start, end):
-        if end <= start:
-            return
-        start = max(0, int(start))
-        end = min(int(end), const.TOTAL_FRAMES + 1)
-        if end <= start:
-            return
-        length = end - start
-        self.label_set[start:end] = self.label_buffer[0:length]
-        if self.feature_set is not None:
-            self.feature_set[start:end] = self.feature_buffer[0:length]
-
-        print(f"Flushed chunk to Zarr: frames {start} to {end - 1}")
-        self.label_buffer.fill(0)
-        self.feature_buffer.fill(np.nan)
+    def commit_and_reset(self):
+            # Write to disk
+            self.sed_labelset[:, self.write_offset : self.write_offset + self.chunk_size, :] = self.sed_chunk_buffer
+            self.doa_labelset[:, self.write_offset : self.write_offset + self.chunk_size, :] = self.doa_chunk_buffer
+            
+            # Advance the window
+            self.write_offset += self.chunk_size
+            
+            # Zero the buffers for the next chunk
+            self.sed_chunk_buffer.fill(0.0)
+            self.doa_chunk_buffer.fill(0.0)

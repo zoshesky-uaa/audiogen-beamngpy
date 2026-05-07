@@ -1,6 +1,0 @@
-soundfile
-sounddevice
-numpy
-beamngpy
-audioflux
-zarr

@@ -1,0 +1,10 @@
+AMBULANCE = [
+    Vehicle("(Vehicle) MD-Series MD-Series MD70 Ambulance 4WD (M)", model="md_series", part_config="vehicles/md_series/md_70_ambulance_4wd.pc", licence="EV"),
+    Vehicle("(Vehicle) MD-Series MD-Series MD60 Ambulance (A)", model="md_series", part_config="vehicles/md_series/md_60_ambulance.pc", licence="EV"),
+    Vehicle("(Vehicle) Wydra Wydra Rescue (CVT)", model="atv", part_config="vehicles/atv/rescue.pc", licence="EV"),
+    Vehicle("(Vehicle) H-Series H-Series H45 Ambulance (A)", model="van", part_config="vehicles/van/ambulance.pc", licence="EV"),
+    Vehicle("(Vehicle) D-Series D-Series D45 Off-Road Ambulance (A)", model="pickup", part_config="vehicles/pickup/d45_diesel_4wd_ambulance_A.pc", licence="EV"),
+    Vehicle("(Vehicle) D-Series D-Series D45 Ambulance (A)", model="pickup", part_config="vehicles/pickup/d45_ambulance_A.pc", licence="EV"),
+    Vehicle("(Vehicle) Simplified Traffic Vehicles Simplified Traffic Vehicles Gavril H-Series Ambulance (Parked)", model="simple_traffic", part_config="vehicles/simple_traffic/van_ambulance_parked.pc", licence="EV"),
+    Vehicle("(Vehicle) Simplified Traffic Vehicles Simplified Traffic Vehicles Gavril H-Series Ambulance (Alt) (Parked)", model="simple_traffic", part_config="vehicles/simple_traffic/van_ambulance_alt_parked.pc", licence="EV"),
+]

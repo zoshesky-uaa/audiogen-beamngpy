@@ -12,6 +12,7 @@ class DriverRecorder:
         self.vehicle_update_tick = vehicle_update_tick
         self.main_tick = main_tick
         self.simulation = simulation
+        self._next_keep_alive_frame = 0
         self.run(ai=ai)
 
     def run(self, ai=True):
@@ -31,3 +32,4 @@ class DriverRecorder:
         self.driver_ref.vehicle.ai.set_mode("traffic")
         self.driver_ref.vehicle.ai.set_aggression(0.2)
         self.driver_ref.vehicle.ai.drive_in_lane(True)
+
