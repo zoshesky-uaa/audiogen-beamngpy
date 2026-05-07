@@ -6,17 +6,8 @@ from pathlib import Path
 
 BEAMNG_BINARY_PATHS = (
     "BeamNG.tech.exe",
-    "BeamNG.drive.exe",
     os.path.join("Bin64", "BeamNG.tech.x64.exe"),
-    os.path.join("Bin64", "BeamNG.x64.exe"),
-    os.path.join("Bin64", "BeamNG.drive.x64.exe"),
 )
-
-STEAM_LIBRARY_CANDIDATES = (
-    Path(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")) / "Steam",
-    Path(os.environ.get("PROGRAMFILES", r"C:\Program Files")) / "Steam",
-)
-
 
 class BeamNGHomeNotFound(RuntimeError):
     pass
@@ -52,7 +43,6 @@ def _candidate_paths(configured_home):
     yield os.environ.get("BEAMNG_HOME")
     yield from _beamng_homes_from_logs()
     yield from _registry_candidates()
-    yield from _steam_candidates()
     yield from _user_profile_candidates()
     yield from _nearby_candidates()
     yield from _common_install_candidates()
@@ -98,11 +88,6 @@ def _common_install_candidates():
 
         yield from _matching_child_dirs(root, "beamng")
 
-        for folder_name in ("Program Files", "Program Files (x86)", "Games", "SteamLibrary"):
-            folder = root / folder_name
-            for name in names:
-                yield folder / name
-            yield from _matching_child_dirs(folder, "beamng")
 
 
 def _nearby_candidates():
@@ -119,38 +104,6 @@ def _user_profile_candidates():
         yield folder / "BeamNG.tech"
         yield folder / "BeamNG.drive"
         yield from _matching_child_dirs(folder, "beamng")
-
-
-def _steam_candidates():
-    for steam_root in STEAM_LIBRARY_CANDIDATES:
-        yield from _steam_library_candidates(steam_root)
-
-    for library_root in _steam_libraries_from_vdf():
-        yield from _steam_library_candidates(library_root)
-
-    if os.name == "nt":
-        for letter in string.ascii_uppercase:
-            yield from _steam_library_candidates(Path(f"{letter}:\\SteamLibrary"))
-
-
-def _steam_library_candidates(library_root):
-    common = library_root / "steamapps" / "common"
-    yield common / "BeamNG.drive"
-    yield common / "BeamNG.tech"
-    yield from _matching_child_dirs(common, "beamng")
-
-
-def _steam_libraries_from_vdf():
-    for steam_root in STEAM_LIBRARY_CANDIDATES:
-        library_file = steam_root / "steamapps" / "libraryfolders.vdf"
-        if not library_file.is_file():
-            continue
-        try:
-            content = library_file.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            continue
-        for match in re.finditer(r'"path"\s+"([^"]+)"', content):
-            yield Path(match.group(1).replace("\\\\", "\\"))
 
 
 def _registry_candidates():

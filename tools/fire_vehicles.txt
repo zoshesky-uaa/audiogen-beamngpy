@@ -1,0 +1,7 @@
+FIRE = [
+    Vehicle("(Vehicle) Stambecco Stambecco 525-FP (M)", model="midtruck", part_config="vehicles/midtruck/6x6_firetruck_petrol.pc", licence="EV"),
+    Vehicle("(Vehicle) Stambecco Stambecco 525-FP-2 (M)", model="midtruck", part_config="vehicles/midtruck/6x6_firetruck_diesel.pc", licence="EV"),
+    Vehicle("(Vehicle) Wydra Wydra Rescue (CVT)", model="atv", part_config="vehicles/atv/rescue.pc", licence="EV"),
+    Vehicle("(Vehicle) Roamer Roamer Fire Chief (A)", model="roamer", part_config="vehicles/roamer/firechief.pc", licence="EV"),
+    Vehicle("(Vehicle) LeGran LeGran Fire Chief (Facelift) (A)", model="legran", part_config="vehicles/legran/firechief.pc", licence="EV"),
+]

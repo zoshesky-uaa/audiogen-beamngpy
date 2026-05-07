@@ -1,9 +1,8 @@
-/venv
+/.conda
 /__pycache__
 *.pyc
 /run/__pycache__
 /scenarios/__pycache__
 /trials
 /spawns/__pycache__
-/beamngpy
 /beamng_user

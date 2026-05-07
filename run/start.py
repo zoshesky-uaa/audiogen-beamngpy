@@ -47,7 +47,6 @@ class Simulation:
                 open_beamng(counter)
 
         open_beamng(0)
-        self.on = True
         self.beamng.settings.set_nondeterministic()
         self.scenario_run_id = int(time() * 1000)
         self.current_time = "noon"
@@ -59,8 +58,7 @@ class Simulation:
         self.trial_valid = True
         self.abort_reason = None
         self.shutting_down = False
-        self.controlled_targets = {0: 0, 1: 0}
-        self.controlled_spawned = {0: 0, 1: 0}
+        self.controlled_spawned = 0
 
     def invalidate_trial(self, reason, stop_run=False):
         if self.trial_valid:
@@ -176,8 +174,7 @@ class Simulation:
         self.trial_valid = True
         self.abort_reason = None
         self.shutting_down = False
-        self.controlled_targets = {0: 0, 1: 0}
-        self.controlled_spawned = {0: 0, 1: 0}
+        self.controlled_spawned = 0
 
         self.vehicle_controller = vehicles.builder(simulation=self)
         self.event_scheduler = scheduler.Scheduler(self)
@@ -200,62 +197,27 @@ class Simulation:
         self.vehicle_controller.arm_driver_ai(ai=ai)
 
     def simulation_traffic_setup(self):
-        n_traffic_rand = random.randint(const.MINIMUM_TRAFFIC_VEHICLES, const.MAXIMUM_TRAFFIC_VEHICLES)
-        control_count = min(n_traffic_rand, const.MAXIMUM_CONTROLLABLE_VEHICLES)
-        self.controlled_targets[0] = control_count
+        n_traffic_rand = random.randint(1, const.MAXIMUM_TRAFFIC_VEHICLES)
 
         print(f"Number of traffic vehicles: {n_traffic_rand}. Setting up traffic vehicles.")
         for _ in range(n_traffic_rand):
-            vehicle_ref = None
-            if control_count > 0:
-                control_count -= 1
-                vehicle_ref = self.vehicle_controller.vehicle_spawn(EV=False, control=True)
-                if vehicle_ref is not None:
-                    self.controlled_spawned[0] += 1
-                    self.event_scheduler.append_event(0, vehicle_ref)
-                else:
-                    vehicle_ref = self.vehicle_controller.vehicle_spawn(EV=False, control=False)
-                    if vehicle_ref is not None:
-                        self._background_traffic.append(vehicle_ref.vehicle)
-            else:
-                vehicle_ref = self.vehicle_controller.vehicle_spawn(EV=False, control=False)
-                if vehicle_ref is not None:
-                    self._background_traffic.append(vehicle_ref.vehicle)
+            vehicle_ref = self.vehicle_controller.vehicle_spawn(control=False)
             if vehicle_ref is not None:
-                # Do not set traffic AI mode during setup; this can block BeamNGpy.
-                # TrafficEvent applies behavior after the scenario scheduler is running.
-                print(f"Traffic vehicle {vehicle_ref.vid} successfully spawned")
-
-        n_police_rand = random.randint(const.MINIMUM_EMERGENCY_VEHICLES, const.MAXIMUM_EMERGENCY_VEHICLES)
-        control_count = min(n_police_rand, const.MAXIMUM_CONTROLLABLE_VEHICLES)
-        self.controlled_targets[1] = control_count
-
-        print(f"Number of emergency vehicles: {n_police_rand}. Setting up emergency vehicles.")
-        for _ in range(n_police_rand):
-            vehicle_ref = None
-            if control_count > 0:
-                control_count -= 1
-                vehicle_ref = self.vehicle_controller.vehicle_spawn(EV=True, control=True)
+                self._background_traffic.append(vehicle_ref.vehicle)
+  
+        print(f"Number of emergency vehicles: {const.se_count*const.se_count}. Setting up emergency vehicles.")
+        for event in range(const.se_count):
+            for _ in range(const.track_count):
+                vehicle_ref = self.vehicle_controller.vehicle_spawn(sound_class=event, control=True)
                 if vehicle_ref is not None:
-                    self.controlled_spawned[1] += 1
-                    self.event_scheduler.append_event(1, vehicle_ref)
+                    self.controlled_spawned += 1
+                    self.event_scheduler.append_event(event, vehicle_ref)
                 else:
-                    vehicle_ref = self.vehicle_controller.vehicle_spawn(EV=True, control=False)
-                    if vehicle_ref is not None:
-                        self._background_traffic.append(vehicle_ref.vehicle)
-            else:
-                vehicle_ref = self.vehicle_controller.vehicle_spawn(EV=True, control=False)
-                if vehicle_ref is not None:
-                    self._background_traffic.append(vehicle_ref.vehicle)
-            if vehicle_ref is not None:
-                vehicle_ref.vehicle.ai.set_mode("traffic")
-                print(f"Emergency vehicle {vehicle_ref.vid} successfully spawned")
+                    print("Failed to spawn controlled emergency vehicle")
 
         missing_controlled = []
-        if self.controlled_spawned[0] < self.controlled_targets[0]:
-            missing_controlled.append(f"traffic {self.controlled_spawned[0]}/{self.controlled_targets[0]}")
-        if self.controlled_spawned[1] < self.controlled_targets[1]:
-            missing_controlled.append(f"emergency {self.controlled_spawned[1]}/{self.controlled_targets[1]}")
+        if self.controlled_spawned < const.track_count*const.se_count:
+            missing_controlled.append(f"emergency {self.controlled_spawned}/{const.track_count*const.se_count}")
         if missing_controlled:
             self.invalidate_trial("Controlled source shortfall: " + ", ".join(missing_controlled))
 
@@ -267,11 +229,11 @@ class Simulation:
         scheduler_ref = self.event_scheduler
         if scheduler_ref is not None:
             scheduler_ref.stop_all()
-            scheduler_ref.finalize_trial(self.trial_valid, self.abort_reason)
             self.event_scheduler = None
 
         if self._background_traffic:
             try:
+                # Don't believe this does anything since the vehicles aren't techincally "traffic" AI
                 self.beamng.traffic.stop()
             except Exception as e:
                 print(f"Failed to stop background traffic: {e}")
@@ -300,5 +262,4 @@ class Simulation:
 
     def close(self):
         self.scenario_cleanup()
-        self.on = False
         self.beamng.close()
