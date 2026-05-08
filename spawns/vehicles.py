@@ -369,6 +369,8 @@ class Vehicle_Reference:
         self.next_state_poll_frame = current_frame + backoff_frames
 
     def _read_state(self):
+        if "state" not in self.vehicle.sensors:
+            self.vehicle.sensors.attach("state", State())
         self.vehicle.sensors.poll("state")
         state = self.vehicle.state
         if not isinstance(state, dict):
