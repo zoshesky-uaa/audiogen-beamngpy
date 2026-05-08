@@ -56,9 +56,16 @@ class FSM:
         }
     
     def zarr_cleanup(self):
-        self.simulation.event_scheduler.join_thread(self.writer)
+        if self.simulation.event_scheduler is not None:
+            self.simulation.event_scheduler.join_thread(self.writer)
         if self.root_group is not None:
-            shutil.rmtree(self.simulation.zarr_path)
+            try:
+                print(f"Cleaning up Zarr directory: {self.simulation.zarr_path.as_posix()}")
+                shutil.rmtree(self.simulation.zarr_path)
+            except FileNotFoundError:
+                pass
+            except PermissionError as e:
+                print(f"Could not remove Zarr directory (in use): {e}")
 
 
 import heapq
