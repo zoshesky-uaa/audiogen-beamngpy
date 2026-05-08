@@ -16,10 +16,53 @@ BEAMNG_USER_FOLDER = "beamng_user"
 STABLE_USER_SETTINGS = {
     "SkipGenerateLicencePlate": True,
 }
+def _simulation_stopped(simulation):
+    return simulation is not None and not getattr(simulation, "on", True)
 
+def simulation_loop(simulation=None, scenario_count=None, training=None):
+    if simulation is not None:
+        simulation.scenario_cleanup()
+        simulation.close()
+        simulation = None
+    else:
+        simulation = None
+    try:
+        simulation = Simulation(scenario_count)
+        simulation.beamng.ui.display_message("Starting simulation...")
+        while (simulation.scenario_count >= 0):
+            if _simulation_stopped(simulation):
+                print("Simulation stopped; skipping remaining scenarios.")
+                break
+
+            print(f"Setting up " + simulation.project_name)
+            simulation.scenario_setup(ai=training)
+
+            print(f"Running " + simulation.project_name)
+            simulation.event_scheduler.simulate()
+
+            print(f"Cleaning up " + simulation.project_name)
+            simulation.scenario_cleanup()
+            simulation.scenario_count -= 1
+    except KeyboardInterrupt:
+        print("\nInterrupted - shutting down...")
+        if simulation is not None:
+            simulation.invalidate_trial("Interrupted by user", stop_run=True, permanent=True)
+    except Exception as e:
+        print(f"\nUnexpected error: {e}")
+        if simulation is not None:
+            simulation.invalidate_trial(f"Unexpected error: {e}", stop_run=True)
+        raise
+    finally:
+        print("Simulation ended.")
+        if simulation is not None:
+            try:
+                simulation.close()
+            except Exception as e:
+                print(f"Error closing simulation: {e}")
 
 class Simulation:
-    def __init__(self):
+    def __init__(self, scenario_count):
+        self.scenario_count = scenario_count    
         self.create_temp_folder()
         try:
             beamng_home = resolve_beamng_home(getattr(const, "BEAMNG_LOCATION", None))
@@ -60,6 +103,7 @@ class Simulation:
         self.controlled_spawned = 0
         self.process = None
         self.init = True
+
         # Iterative zarr path creation, keep ahold of path for zarr label operations
         project_root = Path(__file__).resolve().parent.parent
         self.base_path = (project_root / 'trials').resolve()
@@ -71,7 +115,7 @@ class Simulation:
         self.project_name = f"trial_{self.trial_count}"
         self.zarr_path = self.base_path / f"{self.project_name}.zarr"
 
-    def invalidate_trial(self, reason, stop_run=False):
+    def invalidate_trial(self, reason, stop_run=False, permanent=False):
         if self.trial_valid:
             self.trial_valid = False
             self.abort_reason = reason
@@ -79,8 +123,7 @@ class Simulation:
         elif self.abort_reason is None:
             self.abort_reason = reason
         if stop_run and self.event_scheduler is not None:
-            if fsm := getattr(self.event_scheduler, "fsm", None):
-                fsm.zarr_cleanup()
+            self.shutting_down = True
             if self.process is not None:
                 self.process.terminate()
                 try:
@@ -89,6 +132,13 @@ class Simulation:
                     self.process.kill()
             self.event_scheduler.tick.stop()
             self.event_scheduler.vehicle_update_tick.stop()
+            if fsm := getattr(self.event_scheduler, "fsm", None):
+                fsm.zarr_cleanup()
+            if not permanent:
+                simulation_loop(self, self.scenario_count, training=const.TRAINING)
+        if permanent:
+            self.beamng.close()
+            exit()
 
     def random_weather_setup(self):
         weather_presets = ["clear", "cloudy", "rainy", "stormy", "foggy"]
@@ -183,7 +233,9 @@ class Simulation:
 
     def scenario_setup(self, ai=True):
         if not self.init:
-            self.trial_count += 1
+            self.trial_count = 1
+            while (self.base_path / f"trial_{self.trial_count}.zarr").exists():
+                self.trial_count += 1
             self.project_name = f"trial_{self.trial_count}"
             self.zarr_path = self.base_path / f"{self.project_name}.zarr"
         elif self.init:

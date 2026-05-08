@@ -282,6 +282,8 @@ class Scheduler:
             self.join_thread(thread)
 
     def join_thread(self, thread):
+        if thread is threading.current_thread():
+            return
         deadline = monotonic() + 10.0
         while thread.is_alive():
             remaining = deadline - monotonic()
