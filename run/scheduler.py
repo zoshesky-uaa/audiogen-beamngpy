@@ -187,7 +187,7 @@ class Scheduler:
         if not application_path.exists():
             raise FileNotFoundError(f"EXE not found: {application_path}")
         
-        process = subprocess.Popen(
+        self.simulation.process = subprocess.Popen(
             [str(application_path)],
             cwd=str(repo_root),
             stdin=subprocess.PIPE,
@@ -198,25 +198,25 @@ class Scheduler:
         )
 
         def send_exit():
-            if process.poll() is None and process.stdin:
+            if self.simulation.process.poll() is None and self.simulation.process.stdin:
                 try:
-                    process.stdin.write("exit\n")
-                    process.stdin.flush()
+                    self.simulation.process.stdin.write("exit\n")
+                    self.simulation.process.stdin.flush()
                 except (BrokenPipeError, OSError):
                     pass
 
         atexit.register(send_exit)
         
         try:
-            process.stdin.write(json.dumps(self.fsm.gen_cmd) + "\n")
-            process.stdin.flush()
+            self.simulation.process.stdin.write(json.dumps(self.fsm.gen_cmd) + "\n")
+            self.simulation.process.stdin.flush()
         except (BrokenPipeError, OSError) as e:
             print(f"Failed to communicate with binary: {e}")
             self.simulation.invalidate_trial(f"Binary pipe error: {e}", stop_run=True)
             self.tick.stop()
             return
         
-        if process.stdout is None:
+        if self.simulation.process.stdout is None:
             self.simulation.invalidate_trial("Binary stdout not captured", stop_run=True)
             self.tick.stop()
             return
@@ -224,7 +224,7 @@ class Scheduler:
         compression_ratio = int(const.target_res / const.input_frame_time)
         started = False
         try:
-            for line in process.stdout:
+            for line in self.simulation.process.stdout:
                 line = line.strip()
                 if not line:
                     continue
@@ -266,9 +266,9 @@ class Scheduler:
             self.simulation.invalidate_trial(f"Binary read error: {e}", stop_run=True)
         
         sleep(5)
-        process.poll()
-        if process.returncode is not None and process.returncode != 0:
-            self.simulation.invalidate_trial(f"Binary exited with code {process.returncode}", stop_run=True)
+        self.simulation.process.poll()
+        if self.simulation.process.returncode is not None and self.simulation.process.returncode != 0:
+            self.simulation.invalidate_trial(f"Binary exited with code {self.simulation.process.returncode}", stop_run=True)
         self.join_thread(self.fsm.writer)
         print("Scenario ended")
         if not self.simulation.trial_valid:

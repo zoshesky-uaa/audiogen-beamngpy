@@ -5,6 +5,7 @@ import z5py
 from pathlib import Path
 import const
 import numpy as np
+import shutil  
 
 class FSM:
     def __init__(self, tick, simulation=None):
@@ -12,20 +13,10 @@ class FSM:
         self.tick = tick
         self.simulation = simulation
 
-        # Iterative zarr path creation, keep ahold of path for zarr label operations
-        project_root = Path(__file__).resolve().parent.parent
-        base_path = (project_root / 'trials').resolve()
-        base_path.mkdir(parents=True, exist_ok=True)
-
-        # Find the next available trial index
-        i = 1
-        while (base_path / f"trial_{i}.zarr").exists():
-            i += 1
-
-        root_group = z5py.File(base_path / f"trial_{i}.zarr", use_zarr_format=True)
-        print(f"Created Zarr file at: {(base_path / f'trial_{i}.zarr').as_posix()}")
+        self.root_group = z5py.File(self.simulation.zarr_path, use_zarr_format=True)
+        print(f"Created Zarr file at: {self.simulation.zarr_path.as_posix()}")
         # Create labelsets
-        sed_labelset = root_group.create_dataset("sed_labels", 
+        sed_labelset = self.root_group.create_dataset("sed_labels", 
                                     dtype="float32", 
                                     shape=(const.sed_label_buffer_dim[0], const.label_max, const.sed_label_buffer_dim[2]), 
                                     chunks=const.sed_label_buffer_dim,
@@ -36,7 +27,7 @@ class FSM:
                                     shuffle=1,  
                                     blocksize=0)
         
-        doa_labelset = root_group.create_dataset("doa_labels", 
+        doa_labelset = self.root_group.create_dataset("doa_labels", 
                                     dtype="float32", 
                                     shape=(const.doa_label_buffer_dim[0], const.label_max, const.doa_label_buffer_dim[2]), 
                                     chunks=const.doa_label_buffer_dim,
@@ -61,8 +52,13 @@ class FSM:
         
         self.gen_cmd = {
             "device_name": const.AUDIO_INPUT_DEVICE_NAME,
-            "zarr_path": str((base_path / f"trial_{i}.zarr").as_posix()),
+            "zarr_path": str(self.simulation.zarr_path.as_posix()),
         }
+    
+    def zarr_cleanup(self):
+        self.simulation.event_scheduler.join_thread(self.writer)
+        if self.root_group is not None:
+            shutil.rmtree(self.simulation.zarr_path)
 
 
 import heapq
