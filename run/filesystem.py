@@ -6,6 +6,7 @@ from pathlib import Path
 import const
 import numpy as np
 import shutil  
+from run import scheduler
 
 class FSM:
     def __init__(self, tick, simulation=None):
@@ -57,7 +58,7 @@ class FSM:
     
     def zarr_cleanup(self):
         if self.simulation.event_scheduler is not None:
-            self.simulation.event_scheduler.join_thread(self.writer)
+            scheduler.join_thread(self.writer)
         if self.root_group is not None:
             try:
                 print(f"Cleaning up Zarr directory: {self.simulation.zarr_path.as_posix()}")

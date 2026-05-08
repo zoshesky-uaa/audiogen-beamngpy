@@ -10,7 +10,7 @@ import const
 from run.beamng_home import BeamNGHomeNotFound, resolve_beamng_home
 from run import scheduler
 from spawns import vehicles, west_coast_usa
-
+import threading
 
 BEAMNG_USER_FOLDER = "beamng_user"
 STABLE_USER_SETTINGS = {
@@ -21,10 +21,6 @@ def _simulation_stopped(simulation):
 
 def simulation_loop(simulation=None, scenario_count=None, training=None):
     if simulation is not None:
-        simulation.scenario_cleanup()
-        simulation.close()
-        simulation = None
-    else:
         simulation = None
     try:
         simulation = Simulation(scenario_count)
@@ -50,7 +46,7 @@ def simulation_loop(simulation=None, scenario_count=None, training=None):
     except Exception as e:
         print(f"\nUnexpected error: {e}")
         if simulation is not None:
-            simulation.invalidate_trial(f"Unexpected error: {e}", stop_run=True)
+            simulation.invalidate_trial(f"Unexpected error: {e}", stop_run=True, permanent=True)
         raise
     finally:
         print("Simulation ended.")
@@ -103,6 +99,7 @@ class Simulation:
         self.controlled_spawned = 0
         self.process = None
         self.init = True
+        self.thread = threading.current_thread()
 
         # Iterative zarr path creation, keep ahold of path for zarr label operations
         project_root = Path(__file__).resolve().parent.parent
@@ -135,7 +132,13 @@ class Simulation:
             if fsm := getattr(self.event_scheduler, "fsm", None):
                 fsm.zarr_cleanup()
             if not permanent:
-                simulation_loop(self, self.scenario_count, training=const.TRAINING)
+                try:
+                    self.scenario_cleanup()
+                    self.close()
+                except Exception as e:
+                    print(f"Error closing BeamNG during restart: {e}")
+                sleep(10)
+                simulation_loop(None, self.scenario_count, training=const.TRAINING)
         if permanent:
             self.beamng.close()
             exit()

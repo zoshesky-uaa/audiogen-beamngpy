@@ -269,7 +269,7 @@ class Scheduler:
         self.simulation.process.poll()
         if self.simulation.process.returncode is not None and self.simulation.process.returncode != 0:
             self.simulation.invalidate_trial(f"Binary exited with code {self.simulation.process.returncode}", stop_run=True)
-        self.join_thread(self.fsm.writer)
+        join_thread(self.fsm.writer)
         print("Scenario ended")
         if not self.simulation.trial_valid:
             print(f"Scenario aborted: {self.simulation.abort_reason}")
@@ -279,19 +279,20 @@ class Scheduler:
         self.tick.stop()
         self.vehicle_update_tick.stop()
         for thread in self.threads:
-            self.join_thread(thread)
+            join_thread(thread)
 
-    def join_thread(self, thread):
-        if thread is threading.current_thread():
-            return
-        deadline = monotonic() + 10.0
-        while thread.is_alive():
-            remaining = deadline - monotonic()
-            if remaining <= 0:
-                break
-            try:
-                thread.join(timeout=min(0.25, remaining))
-            except KeyboardInterrupt:
-                print(f"Shutdown interrupted while waiting for {thread.name}; continuing cleanup.")
-        if thread.is_alive():
-            print(f"Warning: thread {thread.name} did not stop in time.")
+# Seperate function for use elsewhere
+def join_thread(thread):
+    if thread is threading.current_thread():
+        return
+    deadline = monotonic() + 10.0
+    while thread.is_alive():
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            break
+        try:
+            thread.join(timeout=min(0.25, remaining))
+        except KeyboardInterrupt:
+            print(f"Shutdown interrupted while waiting for {thread.name}; continuing cleanup.")
+    if thread.is_alive():
+        print(f"Warning: thread {thread.name} did not stop in time.")
