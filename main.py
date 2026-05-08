@@ -2,7 +2,7 @@ from const import TRAINING
 from run import start
 
 
-SCENARIO_COUNT = 10
+SCENARIO_COUNT = 100
 
 
 def _simulation_stopped(simulation):
@@ -20,13 +20,13 @@ def main():
                 print("Simulation stopped; skipping remaining scenarios.")
                 break
 
-            print(f"Setting up Scenario {i + 1}...")
-            simulation.scenario_setup((i + 1), ai=TRAINING)
+            print(f"Setting up " + simulation.project_name)
+            simulation.scenario_setup(ai=TRAINING)
 
-            print(f"Running Scenario {i + 1}...")
+            print(f"Running " + simulation.project_name)
             simulation.event_scheduler.simulate()
 
-            print(f"Cleaning up Scenario {i + 1}...")
+            print(f"Cleaning up " + simulation.project_name)
             simulation.scenario_cleanup()
     except KeyboardInterrupt:
         print("\nInterrupted - shutting down...")

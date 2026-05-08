@@ -4,7 +4,8 @@
 /run/__pycache__
 /scenarios/__pycache__
 /trials
-/spawns/__pycache__
+/spawns/__pycache__S
 /beamng_user
 /tools
 /.vscode
+/.conda

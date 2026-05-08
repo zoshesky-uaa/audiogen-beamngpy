@@ -2,10 +2,10 @@ from time import sleep, time
 import json
 import os
 import random
-
+import subprocess
 from beamngpy import BeamNGpy, Scenario
 from beamngpy.logging import BNGDisconnectedError
-
+from pathlib import Path
 import const
 from run.beamng_home import BeamNGHomeNotFound, resolve_beamng_home
 from run import scheduler
@@ -48,7 +48,6 @@ class Simulation:
 
         open_beamng(0)
         self.beamng.settings.set_nondeterministic()
-        self.scenario_run_id = int(time() * 1000)
         self.current_time = "noon"
         self.event_scheduler = None
         self.scenario = None
@@ -59,6 +58,18 @@ class Simulation:
         self.abort_reason = None
         self.shutting_down = False
         self.controlled_spawned = 0
+        self.process = None
+        self.init = True
+        # Iterative zarr path creation, keep ahold of path for zarr label operations
+        project_root = Path(__file__).resolve().parent.parent
+        self.base_path = (project_root / 'trials').resolve()
+        self.base_path.mkdir(parents=True, exist_ok=True)
+        # Find the next available trial index
+        self.trial_count = 1
+        while (self.base_path / f"trial_{self.trial_count}.zarr").exists():
+            self.trial_count += 1
+        self.project_name = f"trial_{self.trial_count}"
+        self.zarr_path = self.base_path / f"{self.project_name}.zarr"
 
     def invalidate_trial(self, reason, stop_run=False):
         if self.trial_valid:
@@ -68,6 +79,14 @@ class Simulation:
         elif self.abort_reason is None:
             self.abort_reason = reason
         if stop_run and self.event_scheduler is not None:
+            if fsm := getattr(self.event_scheduler, "fsm", None):
+                fsm.zarr_cleanup()
+            if self.process is not None:
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
             self.event_scheduler.tick.stop()
             self.event_scheduler.vehicle_update_tick.stop()
 
@@ -162,13 +181,18 @@ class Simulation:
             self.beamng._scenario = None
         self.scenario = None
 
-    def scenario_setup(self, count, ai=True):
+    def scenario_setup(self, ai=True):
+        if not self.init:
+            self.trial_count += 1
+            self.project_name = f"trial_{self.trial_count}"
+            self.zarr_path = self.base_path / f"{self.project_name}.zarr"
+        elif self.init:
+            self.init = False
+        
         self.environment = random.choices([west_coast_usa.builder()], weights=[1], k=1)[0]
-
-        scenario_name = f"Scenario_{self.scenario_run_id}_{count}"
         level_name = self.environment.name
-        self.clean_scenario_startup(scenario_name, level_name)
-        self.scenario = Scenario(level_name, scenario_name)
+        self.clean_scenario_startup(self.project_name, level_name)
+        self.scenario = Scenario(level_name, self.project_name)
         self._background_traffic = []
         self._spawned_vehicles = []
         self.trial_valid = True
@@ -226,9 +250,8 @@ class Simulation:
 
     def scenario_cleanup(self):
         self.shutting_down = True
-        scheduler_ref = self.event_scheduler
-        if scheduler_ref is not None:
-            scheduler_ref.stop_all()
+        if schedular := getattr(self, "event_scheduler", None):
+            schedular.stop_all()
             self.event_scheduler = None
 
         if self._background_traffic:
