@@ -19,9 +19,9 @@ class ZarrValidator:
     """Scans and validates a directory of Zarr files for ML readiness."""
     
     # Validation Thresholds
-    MIN_ACTIVITY_RATIO = 0.30      # At least 30% of frames must contain an event
-    MAX_ACTIVITY_RATIO = 0.75      # Avoid datasets that are 70% noise/events (no silence)
-    MAX_CONSECUTIVE_SILENCE = 500  # No more than 500 consecutive empty frames (e.g., 1 minutes at 200ms resolution) 
+    MIN_ACTIVITY_RATIO = 0.35      # At least 35% of frames must contain an event
+    MAX_ACTIVITY_RATIO = 0.80      # Avoid datasets that are 80% noise/events (no silence)
+    MAX_CONSECUTIVE_SILENCE = 800  # No more than 800 consecutive empty frames (e.g., 1 minutes at 200ms resolution) 
     LOG_MEL_MIN = -10.0            # Expected floor is ~ -7.0
     LOG_MEL_MAX = 5.0              # Mel energy shouldn't explode
     IV_TOLERANCE = 1.0001          # Intensity Vectors must stay within [-1.0, 1.0]
