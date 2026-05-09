@@ -1,6 +1,7 @@
 import math
 import random
 import const
+from run import exceptions
 
 class VehicleSoundEvent:
     PERCEPTIBILITY_THRESHOLD = 0.01
@@ -37,19 +38,15 @@ class VehicleSoundEvent:
         self.main_tick.waited_action_iterate(self.write_reset)
 
     def run(self):
-        try:
-            self.main_tick.waited_action(self.normal_behavior)
-            action = lambda: random.choices(
-                [self.random_empty, self.random_sound_event],
-                weights=[0.50, 0.50],
-                k=1)[0]()
-            self.main_tick.waited_action_iterate(action)
-        finally:
-            self.write_reset()
+        self.main_tick.waited_action(self.normal_behavior)
+        action = lambda: random.choices(
+            [self.random_empty, self.random_sound_event],
+            weights=[0.50, 0.50],
+            k=1)[0]()
+        self.main_tick.waited_action_iterate(action)
 
+    @exceptions.interruptable
     def normal_behavior(self):
-        if not getattr(self.vehicle_ref, "alive", True):
-            return
         match self.class_index:
             case 99:
                 self.vehicle_ref.vehicle.queue_lua_command("electrics.horn(false)", False)
@@ -61,9 +58,7 @@ class VehicleSoundEvent:
 
     def _has_position_data(self):
         return (
-            getattr(self.vehicle_ref, "alive", True)
-            and getattr(self.driver_ref, "alive", True)
-            and getattr(self.vehicle_ref, "state_available", True)
+            getattr(self.vehicle_ref, "state_available", True)
             and getattr(self.driver_ref, "state_available", True)
         )
 
@@ -109,7 +104,8 @@ class VehicleSoundEvent:
                     event_end_frame = current_frame + math.floor(
                         random.uniform(1 * const.t_prime, 3 * const.t_prime)
                     )
-                    self.vehicle_ref.vehicle.queue_lua_command("electrics.horn(true)", False) 
+                    if (self.beamng_cmd_check()):
+                        self.vehicle_ref.vehicle.queue_lua_command("electrics.horn(true)", False) 
                 case _:
                     pass
             self.random_follow(event_end_frame)
@@ -128,6 +124,7 @@ class VehicleSoundEvent:
         self.normal_behavior() 
         self.write_reset()
     
+    @exceptions.interruptable
     def position_data(self, relative=False):
         if not self._has_position_data():
             return (0.0, 0.0, 0.0) if relative else 0.0
@@ -143,6 +140,7 @@ class VehicleSoundEvent:
             return (0.0, 0.0, 0.0)
         return magnitude
 
+    @exceptions.interruptable
     def _update_chase_speed(self):  
         distance = self.position_data()  
 
@@ -160,6 +158,7 @@ class VehicleSoundEvent:
             )  
             self._chase_frozen = False  
 
+    @exceptions.interruptable
     def chase_follow(self, end_frame, emit_event: bool):
         if not self._has_position_data():
             return
@@ -172,6 +171,7 @@ class VehicleSoundEvent:
 
         self.main_tick.waited_action_iterate(chase_step, max_frame=end_frame)
 
+    @exceptions.interruptable
     def _update_random_event(self):
         distance = self.position_data()
         if distance <= 0.0:
@@ -191,7 +191,7 @@ class VehicleSoundEvent:
         self.write_reset() 
         self.PERCEPTIABLE = False
 
-
+    @exceptions.interruptable
     def random_follow(self, end_frame):
         if not self._has_position_data():
             return
@@ -202,7 +202,6 @@ class VehicleSoundEvent:
             self._update_random_event()
 
         self.main_tick.waited_action_iterate(random_step, max_frame=end_frame)
-
 
     def calculate_estimated_audibility(self, distance):
         if distance <= self.AUDIO_MIN_DISTANCE:
@@ -221,18 +220,16 @@ class VehicleSoundEvent:
             inverse_volume *= fade_multiplier
         return max(0.0, min(1.0, inverse_volume))
 
+    @exceptions.interruptable
     def write_event(self):
-        if self.main_tick.shutdown.is_set():
-            return
         position = self.position_data(relative=True)
         doa_msg = (self.main_tick.frame_index, self.class_index, self.track_index, position[0], position[1], position[2])
         sed_msg = (self.main_tick.frame_index, self.class_index, self.track_index, 1.0)
         self.fsm.doa_queue.append(doa_msg)
         self.fsm.sed_queue.append(sed_msg)
 
+    @exceptions.interruptable
     def write_reset(self):
-        if self.main_tick.shutdown.is_set():
-            return
         reset_frame = self.main_tick.frame_index + 1
         if reset_frame > (const.label_max-1):
             return

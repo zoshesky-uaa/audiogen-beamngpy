@@ -21,7 +21,7 @@ class DriverRecorder:
 
     def run(self, ai=True):
         self.main_tick.waited_action()
-        if self.main_tick.shutdown.is_set() or not getattr(self.driver_ref, "alive", True):
+        if not getattr(self.driver_ref, "alive", True):
             return
         self.simulation.beamng.vehicles.switch(self.driver_ref.vehicle)
         if ai:

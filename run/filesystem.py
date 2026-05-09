@@ -1,8 +1,6 @@
 
 from collections import deque
-import threading
 import z5py
-from pathlib import Path
 import const
 import numpy as np
 import shutil  
@@ -13,6 +11,7 @@ class FSM:
         self.write_active = False
         self.tick = tick
         self.simulation = simulation
+        self.writer_thread = None
 
         self.root_group = z5py.File(self.simulation.zarr_path, use_zarr_format=True)
         print(f"Created Zarr file at: {self.simulation.zarr_path.as_posix()}")
@@ -54,31 +53,36 @@ class FSM:
         self.gen_cmd = {
             "device_name": const.AUDIO_INPUT_DEVICE_NAME,
             "zarr_path": str(self.simulation.zarr_path.as_posix()),
+            **const.const_json["config"]
         }
     
     def zarr_cleanup(self):
-        if self.simulation.event_scheduler is not None:
-            scheduler.join_thread(self.writer)
-        if self.root_group is not None:
+        if self.writer_thread is not None:
+            scheduler.join_thread(self.writer_thread)
+        
+        self.sed_labelset = None
+        self.doa_labelset = None
+        self.root_group = None
+
+        if self.simulation.zarr_path.exists():
             try:
                 print(f"Cleaning up Zarr directory: {self.simulation.zarr_path.as_posix()}")
                 shutil.rmtree(self.simulation.zarr_path)
             except FileNotFoundError:
                 pass
             except PermissionError as e:
-                print(f"Could not remove Zarr directory (in use): {e}")
+                raise RuntimeError(f"Permission error during Zarr cleanup: {e}")
 
 
 import heapq
-class ZarrWriter(threading.Thread):
+class ZarrWriter:
     def __init__(self, 
-                tick, 
-                simulation,
-                sed_labelset,
-                doa_labelset, 
-                sed_queue, 
-                doa_queue):
-        super().__init__(name="ZarrWriter", daemon=True)
+                 tick, 
+                 simulation,
+                 sed_labelset,
+                 doa_labelset, 
+                 sed_queue, 
+                 doa_queue):
         self.tick = tick
         self.simulation = simulation
         self.sed_labelset = sed_labelset
