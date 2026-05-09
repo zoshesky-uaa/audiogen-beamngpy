@@ -205,6 +205,9 @@ class Scheduler:
         started = False
         try:
             for line in self.simulation.process.stdout:
+                if self.simulation.trial_invalid.is_set():
+                    print("\n[ACCDOA] Aborting read loop: Trial was invalidated by a background thread.")
+                    break
                 line = line.strip()
                 if not line:
                     continue
@@ -253,14 +256,11 @@ class Scheduler:
         self.simulation.process.poll()
         if self.simulation.process.returncode is not None and self.simulation.process.returncode != 0:
             self.simulation.invalidate_trial(f"Binary exited with code {self.simulation.process.returncode}", stop_run=True)
-        
-        if self.fsm.writer_thread is not None:
-            join_thread(self.fsm.writer_thread)
-        print("Scenario ended")
-        
-        if self.simulation.trial_invalid.is_set():
-            print(f"Scenario aborted: {self.simulation.abort_reason}")
-            
+        if not self.simulation.trial_invalid.is_set():
+            if self.fsm.writer_thread is not None:
+                join_thread(self.fsm.writer_thread)
+            print("Scenario ended")
+
         self.simulation.beamng.control.pause()
 
     def stop_all(self):
