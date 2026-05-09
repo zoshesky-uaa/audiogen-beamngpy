@@ -20,19 +20,18 @@ sample_rate = 16000 # Sample rate for audio capture (e.g., 16000 Hz)
 fft_size = 512 # FFT size for the STFT
 mel_bins = 128 # Number of Mel bands for the log-mel spectrogram
 hop_length = 160 # Hop length
-target_res = 0.1 # Target output resolution in second (i.e. 0.1s for 100ms)
+target_res = 0.2 # Target output resolution in second (i.e. 0.2s for 200ms resolution)
 batch_size = 24 # Batch size for training
 se_count = 3 # Maximum unique sound events for SED head
 track_count = 3 # Maximum amount of overlapping events for DOAE head
 
-MAXIMUM_VEHICLES = track_count * se_count # Maximum total vehicles in the simulation, considering all classes
 
 # Calculated/Constant parameters:
 epochs = 50 # Number of training epochs
 warmup_epochs = 5 # Number of warmup epochs for learning rate scheduling
 batch_amount = 5 # Number of batches to process for training;
 channels = 4 # Number of audio channels (e.g., 4 for first-order ambisonics)
-time_window = 3
+time_window = 3 # Time window for each training sample in seconds (e.g., 3 seconds)
 patch_size = 16 # Patch size (P) (h x w kernel)
 patch_overlap = 6 # Patch overlap (O) 
 enc_layers = 12 # Encoder layers (L) 
@@ -84,3 +83,48 @@ sed_fet_buffer_dim = (1, frame_time_seq, mel_bins) # SED feature buffer dimensio
 doa_fet_buffer_dim = (5, frame_time_seq, mel_bins) # DOA feature buffer dimension
 sed_label_buffer_dim = (1, t_prime, int(se_count * track_count * 1)) # SED label buffer dimension
 doa_label_buffer_dim = (1, t_prime, int(se_count * track_count * 2)) # DOA label buffer dimension
+
+MAXIMUM_VEHICLES = track_count * se_count # Maximum total vehicles in the simulation, considering all classes
+
+
+const_json = {    
+    "config": {
+        "sample_rate": sample_rate,
+        "fft_size": fft_size,
+        "mel_bins": mel_bins,
+        "hop_length": hop_length,
+        "target_res": target_res,
+        "batch_size": batch_size,
+        "se_count": se_count,
+        "track_count": track_count,
+        "epochs": epochs,
+        "warmup_epochs": warmup_epochs,
+        "batch_amount": batch_amount,
+        "channels": channels,
+        "time_window": time_window,
+        "patch_size": patch_size,
+        "patch_overlap": patch_overlap,
+        "enc_layers": enc_layers,
+        "att_headers": att_headers,
+        "embed_dim": embed_dim,
+        "input_frame_time": input_frame_time,
+        "frame_time_seq": frame_time_seq,
+        "frame_max": frame_max,
+        "conv_stride": conv_stride,
+        "fft_bins": fft_bins,
+        "history_size": history_size,
+        "t_prime": t_prime,
+        "label_max": label_max,
+        "inference_amount": inference_amount,
+        "n_t": n_t,
+        "n_f": n_f,
+        "num_patches": num_patches,
+        "total_seq": total_seq,
+        
+        # Lists/Tuples natively convert to std::vector in nlohmann
+        "sed_fet_buffer_dim": list(sed_fet_buffer_dim),
+        "doa_fet_buffer_dim": list(doa_fet_buffer_dim),
+        "sed_label_buffer_dim": list(sed_label_buffer_dim),
+        "doa_label_buffer_dim": list(doa_label_buffer_dim)
+    }
+}

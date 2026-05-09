@@ -4,8 +4,7 @@ import random
 import math
 from beamngpy import angle_to_quat
 from collections import namedtuple
-import threading
-import traceback
+from run.start import scheduler
 
 MIN_SPAWN_SEPARATION_METERS = 20.0
 MAX_SPAWN_SEGMENT_ATTEMPTS = 40
@@ -16,20 +15,7 @@ MAX_SEGMENT_GRADE_METERS = 4.0
 SPAWN_VALIDATION_STEPS = 60
 SPAWN_VALIDATION_CHECKS = 2
 MAX_SPAWN_DRIFT_METERS = 25.0
-STATE_POLL_INTERVAL_FRAMES = 8
-DRIVER_STATE_POLL_INTERVAL_FRAMES = 4
-POLL_TIMEOUT_BACKOFF_FRAMES = 8
-MAX_CONSECUTIVE_STATE_TIMEOUTS = 3
 MAX_SEGMENT_FAILURES = 3
-DISCONNECT_ERRORS = (
-    BNGDisconnectedError,
-    BNGError,
-    ConnectionResetError,
-    ConnectionAbortedError,
-    ConnectionRefusedError,
-    BrokenPipeError,
-    OSError,
-)
 
 class builder:
     def __init__(self, simulation):
@@ -297,125 +283,48 @@ class Vehicle_Reference:
         self.alive = True
         self.controlled = control
         self.driver = driver
+        
         self.state = VehicleState((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), 0.0, 0.0, 0.0, (0.0, 0.0, 0.0, 0.0))
-        self.state_poll_interval = DRIVER_STATE_POLL_INTERVAL_FRAMES if driver else STATE_POLL_INTERVAL_FRAMES
-        self.next_state_poll_frame = 0
-        self.poll_timeout_reported = False
-        self.state_poll_failures = 0
         self.state_available = False
+
         if control:
             if driver:
-                print(f"Driver vehicle {self.vid} intialized")
-                self.thread = self._start_guarded_thread(self.driver_run, f"Driver control thread {self.vid}")
+                print(f"Driver vehicle {self.vid} initialized")
+                self.thread = scheduler.start_guarded_thread(self.simulation, self.driver_run, f"Driver control thread {self.vid}")
             else:
-                print(f"Sound event vehicle {self.vid} intialized")
-                self.thread = self._start_guarded_thread(self.run, f"Vehicle control thread {self.vid}")
-
-    def _should_ignore_failure(self):
-        return (
-            self.tick.shutdown.is_set()
-            or not getattr(self.simulation, "on", True)
-            or getattr(self.simulation, "shutting_down", False)
-        )
-
-    def _start_guarded_thread(self, target, failure_label):
-        def guarded():
-            try:
-                target()
-            except Exception as e:
-                if self._should_ignore_failure():
-                    return
-                print(f"{failure_label} failed: {e}")
-                traceback.print_exc()
-                self.mark_dead(e)
-
-        thread = threading.Thread(target=guarded, name=failure_label, daemon=True)
-        thread.start()
-        return thread
+                print(f"Sound event vehicle {self.vid} initialized")
+                self.thread = scheduler.start_guarded_thread(self.simulation, self.run, f"Vehicle control thread {self.vid}")
 
     def run(self):
-        if self.tick.waited_action() is None or self._should_ignore_failure():
-            return
+        self.tick.waited_action()
         self.tick.waited_action_iterate(self.update, cond_func=lambda: self.alive)
 
     def driver_run(self):
-        if self.tick.waited_action() is None or self._should_ignore_failure():
-            return
+        self.tick.waited_action()
         self.tick.waited_action_iterate(self.update, cond_func=lambda: self.alive)
 
-    def mark_dead(self, error):
-        if not self.alive:
-            return
-        self.alive = False
-        self.state_available = False
-        print(f"Vehicle {self.vid} became unavailable: {error}")
-        if self.driver:
-            self.simulation.invalidate_trial(f"Driver vehicle {self.vid} became unavailable: {error}", stop_run=True)
-        elif self.controlled:
-            self.simulation.invalidate_trial(f"Controlled source {self.vid} became unavailable: {error}", stop_run=True)
-
-    def _handle_state_timeout(self, current_frame):
-        if self._should_ignore_failure():
-            return
-        self.state_available = False
-        self.state_poll_failures += 1
-        if not self.poll_timeout_reported:
-            print(f"Warning: state poll timed out for {self.vid}; keeping last state.")
-            self.poll_timeout_reported = True
-        backoff_frames = POLL_TIMEOUT_BACKOFF_FRAMES * min(
-            self.state_poll_failures,
-            MAX_CONSECUTIVE_STATE_TIMEOUTS,
-        )
-        self.next_state_poll_frame = current_frame + backoff_frames
-
     def _read_state(self):
-        if "state" not in self.vehicle.sensors:
-            self.vehicle.sensors.attach("state", State())
         self.vehicle.sensors.poll("state")
         state = self.vehicle.state
-        if not isinstance(state, dict):
-            raise RuntimeError(f"state unavailable for {self.vid}")
-        position = state.get("pos")
-        velocity = state.get("vel")
-        if position is None or velocity is None:
-            raise RuntimeError(f"incomplete state data for {self.vid}")
-        if not all(math.isfinite(v) for v in (*position, *velocity)):
-            raise RuntimeError(f"non-finite state data for {self.vid}")
+        position = state.get("pos")  
+        velocity = state.get("vel")    
         return position, velocity
-
+ 
     def update(self):
-        if not self.alive or self._should_ignore_failure():
-            return
-        current_frame = self.tick.frame_index
-        if current_frame < self.next_state_poll_frame:
-            return
+        if not self.alive:
+            return    
         try:
             position, velocity = self._read_state()
-        except TimeoutError:
-            self._handle_state_timeout(current_frame)
-            return
-        except DISCONNECT_ERRORS as e:
-            if self._should_ignore_failure():
-                return
-            if isinstance(e, BNGError) and "connect" not in str(e).lower():
-                raise
-            self.mark_dead(e)
-            return
-        except RuntimeError:
-            if self._should_ignore_failure():
-                return
+            self.state_available = True
+            self.state = VehicleState(position, velocity, 0.0, 0.0, 0.0, (0.0, 0.0, 0.0, 0.0))
+            
+        except Exception as e:
             self.state_available = False
-            self.next_state_poll_frame = current_frame + POLL_TIMEOUT_BACKOFF_FRAMES
-            if not self.poll_timeout_reported:
-                print(f"Warning: state data unavailable for {self.vid}; keeping last state.")
-                self.poll_timeout_reported = True
-            return
-
-        self.state_poll_failures = 0
-        self.state_available = True
-        self.state = VehicleState(position, velocity, 0.0, 0.0, 0.0, (0.0, 0.0, 0.0, 0.0))
-        self.poll_timeout_reported = False
-        self.next_state_poll_frame = current_frame + self.state_poll_interval
+            
+            # Fatal socket disconnect: Invalidate the trial directly and kill thread
+            if "connect" in str(e).lower() or "not connected" in str(e).lower():
+                self.alive = False
+                self.simulation.invalidate_trial(f"Vehicle {self.vid} disconnected: {e}", stop_run=True)
 
 
 POLICE = [

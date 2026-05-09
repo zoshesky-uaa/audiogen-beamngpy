@@ -8,57 +8,89 @@ from beamngpy.logging import BNGDisconnectedError
 from pathlib import Path
 import const
 from run.beamng_home import BeamNGHomeNotFound, resolve_beamng_home
-from run import scheduler
+from run import exceptions, scheduler
 from spawns import vehicles, west_coast_usa
 import threading
+import socket as _socket  
+  
+def _wait_for_port_free(host, port, timeout=15):  
+    from time import time, sleep  
+    deadline = time() + timeout  
+    while time() < deadline:  
+        try:  
+            with _socket.create_connection((host, port), timeout=1):  
+                sleep(0.5)  # still listening, wait  
+        except (ConnectionRefusedError, OSError):  
+            return  # port is free  
+    raise RuntimeError(f"Port {port} still in use after {timeout}s")
+
 
 BEAMNG_USER_FOLDER = "beamng_user"
 STABLE_USER_SETTINGS = {
     "SkipGenerateLicencePlate": True,
 }
-def _simulation_stopped(simulation):
-    return simulation is not None and not getattr(simulation, "on", True)
 
-def simulation_loop(simulation=None, scenario_count=None, training=None):
-    if simulation is not None:
-        simulation = None
-    try:
-        simulation = Simulation(scenario_count)
-        simulation.beamng.ui.display_message("Starting simulation...")
-        while (simulation.scenario_count >= 0):
-            if _simulation_stopped(simulation):
-                print("Simulation stopped; skipping remaining scenarios.")
-                break
+def simulation_loop(scenario_count=None, training=None):
+    print("Starting simulation...")
+    while scenario_count >= 0:
+        # State trackers for this specific trial iteration
+        fatal_error = False
 
-            print(f"Setting up " + simulation.project_name)
+        try:
+            simulation = Simulation()    
             simulation.scenario_setup(ai=training)
-
-            print(f"Running " + simulation.project_name)
             simulation.event_scheduler.simulate()
 
-            print(f"Cleaning up " + simulation.project_name)
-            simulation.scenario_cleanup()
-            simulation.scenario_count -= 1
-    except KeyboardInterrupt:
-        print("\nInterrupted - shutting down...")
-        if simulation is not None:
-            simulation.invalidate_trial("Interrupted by user", stop_run=True, permanent=True)
-    except Exception as e:
-        print(f"\nUnexpected error: {e}")
-        if simulation is not None:
-            simulation.invalidate_trial(f"Unexpected error: {e}", stop_run=True, permanent=True)
-        raise
-    finally:
-        print("Simulation ended.")
-        if simulation is not None:
-            try:
-                simulation.close()
-            except Exception as e:
-                print(f"Error closing simulation: {e}")
+        except KeyboardInterrupt:
+            print("\nInterrupted - shutting down...")
+            if simulation is not None:
+                simulation.invalidate_trial("Interrupted by user", stop_run=True)
+            fatal_error = True
+            
+        except exceptions.RestartInterrupt as e:
+            print(f"\n[Aborted Setup] {e}")
+            
+        except Exception as e:
+            print(f"\nUnexpected error in main thread: {e}")
+            if simulation is not None:
+                simulation.invalidate_trial(f"Main thread error: {e}", stop_run=True)
+            fatal_error = True
+
+        finally:
+            # 1. Cleanup happens unconditionally
+            if simulation is not None:
+                print(f"Cleaning up scenario: {simulation.project_name}")
+                simulation.scenario_cleanup()
+
+                # 2. Teardown happens if the trial was marked invalid
+                if simulation.trial_invalid.is_set():
+                    # Only do the heavy restart teardown if we aren't trying to exit the script entirely
+                    if not fatal_error:
+                        print(f"Trial failed ({simulation.abort_reason}). Tearing down BeamNG for restart...")
+                        simulation.close()
+
+        # --- LOOP CONTROL RESOLUTION ---
+        # Handled outside the try/except/finally structure to avoid Python overrides
+        
+        if fatal_error:
+            break  # Actually exits the while loop now
+            
+        if not simulation.trial_invalid.is_set():
+            scenario_count -= 1
+        else:
+            print(f"Retrying scenario {scenario_count}...")
+            _wait_for_port_free("localhost", 25252)  
+            simulation = None
+
+    print("Simulation sequence ended.")
+    if simulation is not None:
+        try:
+            simulation.close()
+        except Exception as e:
+            print(f"Error closing simulation: {e}")
 
 class Simulation:
-    def __init__(self, scenario_count):
-        self.scenario_count = scenario_count    
+    def __init__(self):
         self.create_temp_folder()
         try:
             beamng_home = resolve_beamng_home(getattr(const, "BEAMNG_LOCATION", None))
@@ -73,19 +105,17 @@ class Simulation:
             gfx="dx11",
         )
 
-        def open_beamng(counter):
+        for attempt in range(10):
             try:
                 self.beamng.open(launch=True)
+                break
             except BNGDisconnectedError:
-                print("Retrying connection...")
+                print(f"Retrying connection... (Attempt {attempt + 1}/10)")
                 sleep(3)
-                counter += 1
-                if counter >= 10:
-                    self.beamng.close()
-                    raise RuntimeError("Could not connect to BeamNG")
-                open_beamng(counter)
-
-        open_beamng(0)
+        else:
+            self.beamng.close()
+            raise RuntimeError("Could not connect to BeamNG")
+        
         self.beamng.settings.set_nondeterministic()
         self.current_time = "noon"
         self.event_scheduler = None
@@ -93,13 +123,11 @@ class Simulation:
         self.vehicle_controller = None
         self._background_traffic = []
         self._spawned_vehicles = []
-        self.trial_valid = True
         self.abort_reason = None
-        self.shutting_down = False
         self.controlled_spawned = 0
         self.process = None
         self.init = True
-        self.thread = threading.current_thread()
+        self.trial_invalid = threading.Event()
 
         # Iterative zarr path creation, keep ahold of path for zarr label operations
         project_root = Path(__file__).resolve().parent.parent
@@ -112,47 +140,38 @@ class Simulation:
         self.project_name = f"trial_{self.trial_count}"
         self.zarr_path = self.base_path / f"{self.project_name}.zarr"
 
-    def invalidate_trial(self, reason, stop_run=False, permanent=False):
-        if self.trial_valid:
-            self.trial_valid = False
+    def invalidate_trial(self, reason, stop_run=False):
+        if not self.trial_invalid.is_set():
+            self.trial_invalid.set()
             self.abort_reason = reason
             print(f"Trial invalidated: {reason}")
+
         elif self.abort_reason is None:
             self.abort_reason = reason
+
         if stop_run and self.event_scheduler is not None:
-            self.shutting_down = True
-            if self.process is not None:
-                self.process.terminate()
-                try:
-                    self.process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    self.process.kill()
+            # Halt the schedulers so threads gracefully exit
             self.event_scheduler.tick.stop()
             self.event_scheduler.vehicle_update_tick.stop()
+            
+            # Signal the FSM but do not invoke BeamNG cleanups here
             if fsm := getattr(self.event_scheduler, "fsm", None):
                 fsm.zarr_cleanup()
-            if not permanent:
-                try:
-                    self.scenario_cleanup()
-                    self.close()
-                except Exception as e:
-                    print(f"Error closing BeamNG during restart: {e}")
-                sleep(10)
-                simulation_loop(None, self.scenario_count, training=const.TRAINING)
-        if permanent:
-            self.beamng.close()
-            exit()
 
+
+    @exceptions.interruptable
     def random_weather_setup(self):
         weather_presets = ["clear", "cloudy", "rainy", "stormy", "foggy"]
         # self.current_weather = random.choice(weather_presets)
         # self.beamng.env.set_weather_preset(self.current_weather, time=5)
 
+    @exceptions.interruptable
     def create_temp_folder(self):
         self.temp_folder = os.path.abspath(BEAMNG_USER_FOLDER)
         os.makedirs(self.temp_folder, exist_ok=True)
         self._ensure_stable_user_settings()
 
+    @exceptions.interruptable
     def _ensure_stable_user_settings(self):
         settings_dir = os.path.join(self.temp_folder, "current", "settings")
         os.makedirs(settings_dir, exist_ok=True)
@@ -173,6 +192,7 @@ class Simulation:
             json.dump(settings, settings_file, indent=2)
             settings_file.write("\n")
 
+    @exceptions.interruptable
     def random_tod_setup(self):
         time_presets = ["morning", "noon", "evening", "night"]
         self.current_time = random.choice(time_presets)
@@ -186,6 +206,7 @@ class Simulation:
             case "noon":
                 self.beamng.env.set_tod(1.0)
 
+    @exceptions.interruptable
     def convert_to_imperial(self):
         self.beamng.settings.change("uiUnits", "imperial")
         self.beamng.settings.change("uiUnitLength", "imperial")
@@ -234,6 +255,7 @@ class Simulation:
             self.beamng._scenario = None
         self.scenario = None
 
+    @exceptions.interruptable
     def scenario_setup(self, ai=True):
         if not self.init:
             self.trial_count = 1
@@ -244,15 +266,14 @@ class Simulation:
         elif self.init:
             self.init = False
         
+        print(f"Setting up scenario: {self.project_name}")
         self.environment = random.choices([west_coast_usa.builder()], weights=[1], k=1)[0]
         level_name = self.environment.name
         self.clean_scenario_startup(self.project_name, level_name)
         self.scenario = Scenario(level_name, self.project_name)
         self._background_traffic = []
         self._spawned_vehicles = []
-        self.trial_valid = True
         self.abort_reason = None
-        self.shutting_down = False
         self.controlled_spawned = 0
 
         self.vehicle_controller = vehicles.builder(simulation=self)
@@ -275,6 +296,7 @@ class Simulation:
         self.simulation_traffic_setup()
         self.vehicle_controller.arm_driver_ai(ai=ai)
 
+    @exceptions.interruptable
     def simulation_traffic_setup(self):
         n_traffic_rand = random.randint(1, const.MAXIMUM_TRAFFIC_VEHICLES)
 
@@ -300,11 +322,10 @@ class Simulation:
         if missing_controlled:
             self.invalidate_trial("Controlled source shortfall: " + ", ".join(missing_controlled))
 
-        if self._background_traffic and self.trial_valid:
+        if self._background_traffic and self.trial_invalid:
             self.beamng.traffic.start(self._background_traffic)
 
     def scenario_cleanup(self):
-        self.shutting_down = True
         if schedular := getattr(self, "event_scheduler", None):
             schedular.stop_all()
             self.event_scheduler = None
@@ -337,6 +358,13 @@ class Simulation:
                 print(f"Failed to stop/delete scenario: {e}")
             finally:
                 self._release_scenario_refs()
+        
+        if self.process is not None:
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
 
     def close(self):
         self.scenario_cleanup()

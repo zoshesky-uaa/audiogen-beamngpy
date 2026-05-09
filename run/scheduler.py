@@ -3,11 +3,11 @@ import traceback
 from time import sleep, monotonic
 import atexit
 import const
-from run import driver, filesystem, soundevent
+from run import driver, filesystem, soundevent, exceptions
 
 
 class Tick:
-    def __init__(self, delay):
+    def __init__(self, delay, simulation):
         self.frame_index = 0
         self.recording_start_frame = 0
         self._cond = threading.Condition()
@@ -15,6 +15,7 @@ class Tick:
         self.delay = delay
         self.on = False
         self.external_clock = False
+        self.restart = simulation.trial_invalid  # Use the simulation's restart event
 
     def start(self, endframe):
         with self._cond:
@@ -23,8 +24,14 @@ class Tick:
 
         endframe = int(endframe)
         if not self.external_clock:
-            while self.frame_index < endframe and not self.shutdown.is_set() and self.on:
+            while self.frame_index < endframe and self.on:
                 self.iterate()
+
+    def check_interrupt(self):
+        if self.restart.is_set():
+            raise exceptions.RestartInterrupt("Restart signal received")
+        if self.shutdown.is_set():
+            raise exceptions.ShutdownInterrupt("Shutdown signal received")
 
     def stop(self):
         with self._cond:
@@ -40,27 +47,22 @@ class Tick:
             self._cond.notify_all()
 
     def iterate(self):
-        with self._cond:
-            if not self.on:
-                return
         self.advance_frame()
         sleep(self.delay)
         
     def advance_frame(self):
         with self._cond:
-            if not self.on:
-                return
             self._cond.notify_all()
             self.frame_index += 1
+        self.check_interrupt()
             
     def wait_next(self, last_frame):
         with self._cond:
             self._cond.wait_for(
                 lambda: self.shutdown.is_set() or (self.frame_index != last_frame and self.on)
             )
-            if self.shutdown.is_set():
-                return None
-            return self.frame_index
+        self.check_interrupt()
+        return self.frame_index
 
     def waited_action(self, action=None):
         if action:
@@ -68,21 +70,19 @@ class Tick:
         return self.wait_next(self.frame_index)
 
     def waited_action_iterate(self, action=None, max_frame=None, cond_func=None):
-        while not self.shutdown.is_set():
+        while True:
             if max_frame is not None and self.frame_index >= max_frame:
                 break
             if cond_func is not None and not cond_func():
                 break
             if action:
                 action()
-            if self.wait_next(self.frame_index) is None:
-                break
-
-
+            self.wait_next(self.frame_index)
+            
 class Scheduler:
     def __init__(self, simulation):
-        self.tick = Tick(delay=const.target_res)
-        self.vehicle_update_tick = Tick(delay=const.target_res/3)
+        self.tick = Tick(delay=const.target_res, simulation=simulation)
+        self.vehicle_update_tick = Tick(delay=const.target_res/2, simulation=simulation)
         self.fsm = filesystem.FSM(self.tick, simulation)
         self.simulation = simulation
         self.threads = []
@@ -96,22 +96,7 @@ class Scheduler:
             or getattr(self.simulation, "shutting_down", False)
         )
 
-    def _start_guarded_thread(self, name, target, failure_label):
-        def guarded():
-            try:
-                target()
-            except Exception as e:
-                if self._should_ignore_thread_failure():
-                    return
-                print(f"{failure_label} failed: {e}")
-                traceback.print_exc()
-                self.simulation.invalidate_trial(f"{failure_label} failed: {e}", stop_run=True)
-
-        thread = threading.Thread(target=guarded, name=name, daemon=True)
-        self.threads.append(thread)
-        thread.start()
-        return thread
-
+    @exceptions.interruptable
     def append_event(self, class_index, vehicle_ref=None, ai=True):
         match class_index:
             case 99:
@@ -136,8 +121,9 @@ class Scheduler:
                 )
                 failure_label = f"Emergency event thread {track_index}"
                 self.class_events.append(class_index)
-        self._start_guarded_thread(failure_label, target, failure_label)
+        start_guarded_thread(self.simulation, target, failure_label)
 
+    @exceptions.interruptable
     def transition_to_scenario(self):
         def instruct():
             self.simulation.beamng.queue_lua_command("core_input_actionFilter.setGroup('all', true)")
@@ -150,28 +136,22 @@ class Scheduler:
             self.simulation.beamng.queue_lua_command("ui_fadeScreen.fadeFromBlack(0.5)")
             self.simulation.beamng.queue_lua_command("core_input_actionFilter.setGroup('all', false)")
 
-        self._start_guarded_thread("Scenario transition thread", instruct, "Scenario transition thread")
+        start_guarded_thread(self.simulation, instruct, "Scenario transition thread")
 
+    @exceptions.interruptable
     def simulate(self):
         audio_data = None
         warmup_frames = int(5 * const.t_prime) # Warmup for 15s
-        if not self.simulation.trial_valid:
-            print(f"Scenario aborted: {self.simulation.abort_reason}")
-            return
 
+        print(f"Running scenario: {self.simulation.project_name}")
         self.simulation.beamng.control.resume()
         print("Warming up scenario...")
-        self._start_guarded_thread(
-            "Vehicle state tick thread",
+        start_guarded_thread(
+            self.simulation,
             lambda: self.vehicle_update_tick.start(2 * (const.label_max + warmup_frames)),
             "Vehicle state tick thread",
         )
         self.tick.start(warmup_frames)
-        if not self.simulation.trial_valid:
-            print(f"Scenario aborted: {self.simulation.abort_reason}")
-            self.simulation.beamng.control.pause()
-            return
-        
         
         self.tick.reset()
         print("Starting scenario loop.")
@@ -234,7 +214,11 @@ class Scheduler:
                     case "START":
                         print("\n[ACCDOA] Intercepted START.")
                         self.tick.start(const.label_max)
-                        self.fsm.writer.start()
+                        self.fsm.writer_thread = start_guarded_thread(
+                            simulation=self.simulation,
+                            target=self.fsm.writer.run,
+                            thread_name="ZarrWriter"
+                        )
                         started = True
 
                     case "END":
@@ -264,15 +248,19 @@ class Scheduler:
         except Exception as e:
             print(f"Error reading from binary: {e}")
             self.simulation.invalidate_trial(f"Binary read error: {e}", stop_run=True)
-        
+
         sleep(5)
         self.simulation.process.poll()
         if self.simulation.process.returncode is not None and self.simulation.process.returncode != 0:
             self.simulation.invalidate_trial(f"Binary exited with code {self.simulation.process.returncode}", stop_run=True)
-        join_thread(self.fsm.writer)
+        
+        if self.fsm.writer_thread is not None:
+            join_thread(self.fsm.writer_thread)
         print("Scenario ended")
-        if not self.simulation.trial_valid:
+        
+        if self.simulation.trial_invalid.is_set():
             print(f"Scenario aborted: {self.simulation.abort_reason}")
+            
         self.simulation.beamng.control.pause()
 
     def stop_all(self):
@@ -296,3 +284,23 @@ def join_thread(thread):
             print(f"Shutdown interrupted while waiting for {thread.name}; continuing cleanup.")
     if thread.is_alive():
         print(f"Warning: thread {thread.name} did not stop in time.")
+
+def start_guarded_thread(simulation, target, thread_name):
+    """Global thread spawner that invalidates the simulation on crash."""
+    def guarded():
+        try:
+            target()
+        except Exception as e:
+            # Catch the stack-unwinding interrupt cleanly
+            if type(e).__name__ == "RestartInterrupt" or type(e).__name__ == "ShutdownInterrupt":
+                return 
+                
+            print(f"{thread_name} failed: {e}")
+            traceback.print_exc()
+            
+            # Push the invalidation directly to the simulation
+            simulation.invalidate_trial(f"{thread_name} failed: {e}", stop_run=True)
+
+    thread = threading.Thread(target=guarded, name=thread_name, daemon=True)
+    thread.start()
+    return thread
