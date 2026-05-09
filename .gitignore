@@ -6,6 +6,7 @@
 /trials
 /spawns/__pycache__S
 /beamng_user
-/tools
 /.vscode
 /.conda
+/tools/__pycache__
+/tools/dataset_validation_report.txt
