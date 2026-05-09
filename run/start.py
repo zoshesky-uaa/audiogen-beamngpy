@@ -54,20 +54,25 @@ def simulation_loop(scenario_count=None, training=None):
             print(f"\nUnexpected error in main thread: {e}")
             if simulation is not None:
                 simulation.invalidate_trial(f"Main thread error: {e}", stop_run=True)
-            fatal_error = True
 
         finally:
             # 1. Cleanup happens unconditionally
             if simulation is not None:
                 print(f"Cleaning up scenario: {simulation.project_name}")
-                simulation.scenario_cleanup()
-
+                try:
+                    simulation.scenario_cleanup()
+                except Exception as e:
+                    print(f"Error attempting cleanup: {e}")
+                
                 # 2. Teardown happens if the trial was marked invalid
                 if simulation.trial_invalid.is_set():
                     # Only do the heavy restart teardown if we aren't trying to exit the script entirely
                     if not fatal_error:
                         print(f"Trial failed ({simulation.abort_reason}). Tearing down BeamNG for restart...")
-                        simulation.close()
+                        try:
+                            simulation.close()
+                        except Exception as e:
+                            print(f"Error during teardown close (Safe to ignore): {e}")
 
         # --- LOOP CONTROL RESOLUTION ---
         # Handled outside the try/except/finally structure to avoid Python overrides
@@ -82,6 +87,7 @@ def simulation_loop(scenario_count=None, training=None):
             _wait_for_port_free("localhost", 25252)  
             simulation = None
 
+    # Out of the loop
     print("Simulation sequence ended.")
     if simulation is not None:
         try:
