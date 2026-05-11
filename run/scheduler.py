@@ -1,6 +1,6 @@
 import threading
 import traceback
-from time import sleep, monotonic
+from time import sleep, monotonic, time
 import atexit
 import const
 from run import driver, filesystem, soundevent, exceptions
@@ -56,7 +56,9 @@ class Tick:
             self.frame_index += 1
         self.check_interrupt()
             
-    def wait_next(self, last_frame):
+    def wait_next(self, last_frame=None):
+        if last_frame is None:
+            last_frame = self.frame_index
         with self._cond:
             self._cond.wait_for(
                 lambda: self.shutdown.is_set() or (self.frame_index != last_frame and self.on)
@@ -121,7 +123,8 @@ class Scheduler:
                 )
                 failure_label = f"Emergency event thread {track_index}"
                 self.class_events.append(class_index)
-        start_guarded_thread(self.simulation, target, failure_label)
+        thread = start_guarded_thread(self.simulation, target, failure_label)
+        self.threads.append(thread)
 
     @exceptions.interruptable
     def transition_to_scenario(self):
@@ -136,7 +139,8 @@ class Scheduler:
             self.simulation.beamng.queue_lua_command("ui_fadeScreen.fadeFromBlack(0.5)")
             self.simulation.beamng.queue_lua_command("core_input_actionFilter.setGroup('all', false)")
 
-        start_guarded_thread(self.simulation, instruct, "Scenario transition thread")
+        thread = start_guarded_thread(self.simulation, instruct, "Scenario transition thread")
+        self.threads.append(thread)
 
     @exceptions.interruptable
     def simulate(self):
@@ -226,6 +230,10 @@ class Scheduler:
 
                     case "END":
                         print("\n[ACCDOA] Intercepted END. Sequence complete.")
+                        self.simulation.completed.set()  # Signal completion to prevent false invalidation
+                        timeout = time() + 5.0
+                        while (self.fsm.sed_queue) and time() < timeout:
+                            sleep(0.1)
                         self.tick.stop()
                         break 
 
@@ -260,8 +268,6 @@ class Scheduler:
             if self.fsm.writer_thread is not None:
                 join_thread(self.fsm.writer_thread)
             print("Scenario ended")
-
-        self.simulation.beamng.control.pause()
 
     def stop_all(self):
         self.tick.stop()

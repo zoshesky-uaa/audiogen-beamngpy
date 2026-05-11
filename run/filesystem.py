@@ -129,64 +129,67 @@ class ZarrWriter:
             current_frame = 0
             self.tick.wait_next(current_frame)
 
-            
-            while not self.tick.shutdown.is_set():
-                current_frame = self.tick.frame_index
-                pending_releases = []
-                # --- Drain Global SED Queue ---
-                while self.sed_queue:
-                    # Peek at the oldest item's frame index
-                    if self.sed_queue[0][0] >= self.write_offset + self.chunk_size:
-                        break  # Reached data for the *next* chunk. Stop popping.
-                    
-                    msg_frame, se_idx, abstract_id, val = self.sed_queue.popleft()
-                    
-                    if msg_frame < self.write_offset:
-                        continue  # Discard stale data
-                    
-                    local_t = msg_frame - self.write_offset
-                    track_idx = self._get_or_assign_track(se_idx, abstract_id)
-                    
-                    if track_idx is not None:
-                        # Track major index
-                        flat_idx = (track_idx * const.se_count) + se_idx
-                        self.sed_chunk_buffer[0, local_t, flat_idx] = val
+            try:
+                while not self.tick.shutdown.is_set():
+                    current_frame = self.tick.frame_index
+                    pending_releases = []
+                    # --- Drain Global SED Queue ---
+                    while self.sed_queue:
+                        # Peek at the oldest item's frame index
+                        if self.sed_queue[0][0] >= self.write_offset + self.chunk_size:
+                            break  # Reached data for the *next* chunk. Stop popping.
                         
-                        # Release the assigned track if this is a write_reset signal
-                        if val == 0.0:
-                            pending_releases.append((se_idx, abstract_id))
+                        msg_frame, se_idx, abstract_id, val = self.sed_queue.popleft()
+                        
+                        if msg_frame < self.write_offset:
+                            continue  # Discard stale data
+                        
+                        local_t = msg_frame - self.write_offset
+                        track_idx = self._get_or_assign_track(se_idx, abstract_id)
+                        
+                        if track_idx is not None:
+                            # Track major index
+                            flat_idx = (track_idx * const.se_count) + se_idx
+                            self.sed_chunk_buffer[0, local_t, flat_idx] = val
+                            
+                            # Release the assigned track if this is a write_reset signal
+                            if val == 0.0:
+                                pending_releases.append((se_idx, abstract_id))
 
-                # --- Drain Global DOA Queue ---
-                while self.doa_queue:
-                    if self.doa_queue[0][0] >= self.write_offset + self.chunk_size:
-                        break  # Reached data for the *next* chunk. Stop popping.
-                    
-                    # Unpack the 6-item tuple
-                    msg_frame, se_idx, abstract_id, x, y, z = self.doa_queue.popleft()
-                    
-                    if msg_frame < self.write_offset:
-                        continue  # Discard stale data
-                    
-                    local_t = msg_frame - self.write_offset
-                    track_idx = self._get_or_assign_track(se_idx, abstract_id)
-                    
-                    if track_idx is not None:
-                        flat_idx = ((track_idx * const.se_count) + se_idx) * 2
-                        self.doa_chunk_buffer[0, local_t, flat_idx]     = x
-                        self.doa_chunk_buffer[0, local_t, flat_idx + 1] = y
+                    # --- Drain Global DOA Queue ---
+                    while self.doa_queue:
+                        if self.doa_queue[0][0] >= self.write_offset + self.chunk_size:
+                            break  # Reached data for the *next* chunk. Stop popping.
                         
-                        # Note: We do NOT call _release_track here. 
-                        # Because write_reset fires both SED and DOA messages for the same frame
-                
-                # Safe release after processing 
-                for se_idx, a_id in pending_releases:
-                    self._release_track(se_idx, a_id)
+                        # Unpack the 6-item tuple
+                        msg_frame, se_idx, abstract_id, x, y, z = self.doa_queue.popleft()
+                        
+                        if msg_frame < self.write_offset:
+                            continue  # Discard stale data
+                        
+                        local_t = msg_frame - self.write_offset
+                        track_idx = self._get_or_assign_track(se_idx, abstract_id)
+                        
+                        if track_idx is not None:
+                            flat_idx = ((track_idx * const.se_count) + se_idx) * 2
+                            self.doa_chunk_buffer[0, local_t, flat_idx]     = x
+                            self.doa_chunk_buffer[0, local_t, flat_idx + 1] = y
+                            
+                            # Note: We do NOT call _release_track here. 
+                            # Because write_reset fires both SED and DOA messages for the same frame
                     
-                # --- Commit Chunk ---
-                if current_frame >= self.write_offset + self.chunk_size:
-                    self.commit_and_reset()
-                    #print(f"Write Operation Committed: Frames {self.write_offset} to {self.write_offset + self.chunk_size - 1}")
-                self.tick.wait_next(current_frame)
+                    # Safe release after processing 
+                    for se_idx, a_id in pending_releases:
+                        self._release_track(se_idx, a_id)
+                        
+                    # --- Commit Chunk ---
+                    if current_frame >= self.write_offset + self.chunk_size:
+                        self.commit_and_reset()
+                        #print(f"Write Operation Committed: Frames {self.write_offset} to {self.write_offset + self.chunk_size - 1}")
+                    self.tick.wait_next(current_frame)
+            finally:
+                print("[ZarrWriter] Thread shutting down. Flushing final buffer to disk...")
+                self.commit_and_reset()
 
     def commit_and_reset(self):
             # Write to disk

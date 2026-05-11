@@ -32,12 +32,12 @@ STABLE_USER_SETTINGS = {
 
 def simulation_loop(scenario_count=None, training=None):
     print("Starting simulation...")
+    simulation = Simulation()   
     while scenario_count >= 0:
         # State trackers for this specific trial iteration
         fatal_error = False
-
-        try:
-            simulation = Simulation()    
+        print(f"Simulation count: {scenario_count}")
+        try: 
             simulation.scenario_setup(ai=training)
             simulation.event_scheduler.simulate()
 
@@ -55,24 +55,18 @@ def simulation_loop(scenario_count=None, training=None):
             if simulation is not None:
                 simulation.invalidate_trial(f"Main thread error: {e}", stop_run=True)
 
-        finally:
-            # 1. Cleanup happens unconditionally
-            if simulation is not None:
-                print(f"Cleaning up scenario: {simulation.project_name}")
-                try:
-                    simulation.scenario_cleanup()
-                except Exception as e:
-                    print(f"Error attempting cleanup: {e}")
-                
-                # 2. Teardown happens if the trial was marked invalid
-                if simulation.trial_invalid.is_set():
-                    # Only do the heavy restart teardown if we aren't trying to exit the script entirely
-                    if not fatal_error:
-                        print(f"Trial failed ({simulation.abort_reason}). Tearing down BeamNG for restart...")
-                        try:
-                            simulation.close()
-                        except Exception as e:
-                            print(f"Error during teardown close (Safe to ignore): {e}")
+        finally:            
+            # 2. Teardown happens if the trial was marked invalid
+            if simulation.trial_invalid.is_set() and not simulation.completed.is_set():
+                # Only do the heavy restart teardown if we aren't trying to exit the script entirely
+                if not fatal_error:
+                    print(f"Trial failed ({simulation.abort_reason}). Tearing down BeamNG for restart...")
+
+            print(f"Cleaning up scenario: {simulation.project_name}")
+            try:
+                simulation.scenario_cleanup()
+            except Exception as e:
+                print(f"Error attempting cleanup: {e}")
 
         # --- LOOP CONTROL RESOLUTION ---
         # Handled outside the try/except/finally structure to avoid Python overrides
@@ -84,8 +78,12 @@ def simulation_loop(scenario_count=None, training=None):
             scenario_count -= 1
         else:
             print(f"Retrying scenario {scenario_count}...")
-            _wait_for_port_free("localhost", 25252)  
-            simulation = None
+            try:
+                simulation.close()
+            except Exception as e:
+                print(f"Error during teardown close (Safe to ignore): {e}")
+            _wait_for_port_free("localhost", 25252) 
+            simulation.launch_beamng()  # Relaunch BeamNG for a fresh start on the next iteration
 
     # Out of the loop
     print("Simulation sequence ended.")
@@ -99,14 +97,41 @@ class Simulation:
     def __init__(self):
         self.create_temp_folder()
         try:
-            beamng_home = resolve_beamng_home(getattr(const, "BEAMNG_LOCATION", None))
+            self.beamng_home = resolve_beamng_home(getattr(const, "BEAMNG_LOCATION", None))
         except BeamNGHomeNotFound as e:
             raise RuntimeError(str(e)) from e
+        
+        self.launch_beamng()
+        self.beamng.settings.set_nondeterministic()
+        self.current_time = "noon"
+        self.event_scheduler = None
+        self.scenario = None
+        self.vehicle_controller = None
+        self._background_traffic = []
+        self._spawned_vehicles = []
+        self.abort_reason = None
+        self.controlled_spawned = 0
+        self.process = None
+        self.init = True
+        self.trial_invalid = threading.Event()
+        self.completed = threading.Event()
 
+        # Iterative zarr path creation, keep ahold of path for zarr label operations
+        project_root = Path(__file__).resolve().parent.parent
+        self.base_path = (project_root / 'trials').resolve()
+        self.base_path.mkdir(parents=True, exist_ok=True)
+        # Find the next available trial index
+        self.trial_count = 1
+        while (self.base_path / f"trial_{self.trial_count}.zarr").exists():
+            self.trial_count += 1
+        self.project_name = f"trial_{self.trial_count}"
+        self.zarr_path = self.base_path / f"{self.project_name}.zarr"
+
+    def launch_beamng(self):
         self.beamng = BeamNGpy(
             host="localhost",
             port=25252,
-            home=beamng_home,
+            home=self.beamng_home,
             user=self.temp_folder,
             gfx="dx11",
         )
@@ -121,48 +146,25 @@ class Simulation:
         else:
             self.beamng.close()
             raise RuntimeError("Could not connect to BeamNG")
-        
-        self.beamng.settings.set_nondeterministic()
-        self.current_time = "noon"
-        self.event_scheduler = None
-        self.scenario = None
-        self.vehicle_controller = None
-        self._background_traffic = []
-        self._spawned_vehicles = []
-        self.abort_reason = None
-        self.controlled_spawned = 0
-        self.process = None
-        self.init = True
-        self.trial_invalid = threading.Event()
-
-        # Iterative zarr path creation, keep ahold of path for zarr label operations
-        project_root = Path(__file__).resolve().parent.parent
-        self.base_path = (project_root / 'trials').resolve()
-        self.base_path.mkdir(parents=True, exist_ok=True)
-        # Find the next available trial index
-        self.trial_count = 1
-        while (self.base_path / f"trial_{self.trial_count}.zarr").exists():
-            self.trial_count += 1
-        self.project_name = f"trial_{self.trial_count}"
-        self.zarr_path = self.base_path / f"{self.project_name}.zarr"
 
     def invalidate_trial(self, reason, stop_run=False):
-        if not self.trial_invalid.is_set():
-            self.trial_invalid.set()
-            self.abort_reason = reason
-            print(f"Trial invalidated: {reason}")
+        if not self.completed.is_set():
+            if not self.trial_invalid.is_set():
+                self.trial_invalid.set()
+                self.abort_reason = reason
+                print(f"Trial invalidated: {reason}")
 
-        elif self.abort_reason is None:
-            self.abort_reason = reason
+            elif self.abort_reason is None:
+                self.abort_reason = reason
 
-        if stop_run and self.event_scheduler is not None:
-            # Halt the schedulers so threads gracefully exit
-            self.event_scheduler.tick.stop()
-            self.event_scheduler.vehicle_update_tick.stop()
-            
-            # Signal the FSM but do not invoke BeamNG cleanups here
-            if fsm := getattr(self.event_scheduler, "fsm", None):
-                fsm.zarr_cleanup()
+            if stop_run and self.event_scheduler is not None:
+                # Halt the schedulers so threads gracefully exit
+                self.event_scheduler.tick.stop()
+                self.event_scheduler.vehicle_update_tick.stop()
+                
+                # Signal the FSM but do not invoke BeamNG cleanups here
+                if fsm := getattr(self.event_scheduler, "fsm", None):
+                    fsm.zarr_cleanup()
 
 
     @exceptions.interruptable
@@ -263,24 +265,11 @@ class Simulation:
 
     @exceptions.interruptable
     def scenario_setup(self, ai=True):
-        if not self.init:
-            self.trial_count = 1
-            while (self.base_path / f"trial_{self.trial_count}.zarr").exists():
-                self.trial_count += 1
-            self.project_name = f"trial_{self.trial_count}"
-            self.zarr_path = self.base_path / f"{self.project_name}.zarr"
-        elif self.init:
-            self.init = False
-        
         print(f"Setting up scenario: {self.project_name}")
         self.environment = random.choices([west_coast_usa.builder()], weights=[1], k=1)[0]
         level_name = self.environment.name
         self.clean_scenario_startup(self.project_name, level_name)
         self.scenario = Scenario(level_name, self.project_name)
-        self._background_traffic = []
-        self._spawned_vehicles = []
-        self.abort_reason = None
-        self.controlled_spawned = 0
 
         self.vehicle_controller = vehicles.builder(simulation=self)
         self.event_scheduler = scheduler.Scheduler(self)
@@ -300,7 +289,7 @@ class Simulation:
 
         self.vehicle_controller.get_road_network()
         self.simulation_traffic_setup()
-        self.vehicle_controller.arm_driver_ai(ai=ai)
+        self.event_scheduler.append_event(99, self.vehicle_controller.driver_ref, ai)
 
     @exceptions.interruptable
     def simulation_traffic_setup(self):
@@ -334,7 +323,6 @@ class Simulation:
     def scenario_cleanup(self):
         if schedular := getattr(self, "event_scheduler", None):
             schedular.stop_all()
-            self.event_scheduler = None
 
         if self._background_traffic:
             try:
@@ -358,7 +346,7 @@ class Simulation:
         if self.scenario is not None:
             try:
                 self.beamng.scenario.stop()
-                sleep(1.0)
+                sleep(5.0)
                 self.scenario.delete(self.beamng)
             except Exception as e:
                 print(f"Failed to stop/delete scenario: {e}")
@@ -371,6 +359,23 @@ class Simulation:
                     self.process.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     self.process.kill()
+        
+        self.trial_count = 1
+        while (self.base_path / f"trial_{self.trial_count}.zarr").exists():
+            self.trial_count += 1
+        self.project_name = f"trial_{self.trial_count}"
+        self.zarr_path = self.base_path / f"{self.project_name}.zarr"
+
+        self._background_traffic = []
+        self._spawned_vehicles = []
+        self.abort_reason = None
+        self.controlled_spawned = 0
+        self.trial_invalid.clear()
+        self.completed.clear()
+        self.event_scheduler = None
+        self.scenario = None
+        self.vehicle_controller = None
+        self.process = None
 
     def close(self):
         self.scenario_cleanup()
