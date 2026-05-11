@@ -61,23 +61,28 @@ class VehicleSoundEvent:
             getattr(self.vehicle_ref, "state_available", True)
             and getattr(self.driver_ref, "state_available", True)
         )
-
+    
+    def _wait_for_position(self):
+        print(f"CE({self.class_index}), TE({self.track_index}): Waiting for position data to become available...")
+        while not self._has_position_data():
+            self.main_tick.wait_next(self.main_tick.frame_index)
+        return True
+    
     def random_empty(self):
         if not getattr(self.vehicle_ref, "alive", True) or not getattr(self.driver_ref, "alive", True):
             return
         print(f"CE({self.class_index}), TE({self.track_index}): Starting empty event at recording frame {self.main_tick.frame_index}.")
-        # 15 seconds to 30 seconds
+        # 12 seconds to 24 seconds
         event_end_frame = self.main_tick.frame_index + math.floor(
-            random.uniform(5 * const.t_prime, 10 * const.t_prime)
+            random.uniform(4 * const.t_prime, 8 * const.t_prime)
         )
 
         self.main_tick.waited_action_iterate(max_frame=event_end_frame)
 
     def random_sound_event(self):
-        current_frame = self.main_tick.frame_index
-        if not self._has_position_data():
+        if not self._wait_for_position():
             return
-        
+        current_frame = self.main_tick.frame_index     
         distance = self.position_data()
 
         if distance < self.AUDIO_MAX_DISTANCE and distance != 0:
@@ -115,11 +120,7 @@ class VehicleSoundEvent:
                 f"Starting light follow at recording frame {current_frame}, "
                 f"at distance {distance:.2f} m."
             )
-            # 30 seconds to 60 seconds
-            event_end_frame = current_frame + math.floor(
-                random.uniform(10 * const.t_prime, 20 * const.t_prime)
-            )
-            self.chase_follow(event_end_frame, emit_event=False)
+            self.chase_follow()
 
         self.normal_behavior() 
         self.write_reset()
@@ -139,37 +140,22 @@ class VehicleSoundEvent:
         if relative:
             return (0.0, 0.0, 0.0)
         return magnitude
-
-    @exceptions.interruptable
-    def _update_chase_speed(self):  
-        distance = self.position_data()  
-
-        if 0.0 < distance <= self.AUDIO_MAX_DISTANCE/5:  
-            if not self._chase_frozen:  
-                self.vehicle_ref.vehicle.ai.set_mode("disabled")  
-                self._chase_frozen = True  
-            # Hard brake every tick — bypasses AI entirely  
-            self.vehicle_ref.vehicle.control(brake=1.0, throttle=0.0)  
-            return  
     
-        if self._chase_frozen and distance > self.AUDIO_MAX_DISTANCE/2:  
-            self.vehicle_ref.vehicle.ai.set_target(  
-                self.driver_ref.vehicle.vid, mode="chase"  
-            )  
-            self._chase_frozen = False  
-
     @exceptions.interruptable
-    def chase_follow(self, end_frame, emit_event: bool):
-        if not self._has_position_data():
-            return
+    def chase_follow(self):
         self.vehicle_ref.vehicle.ai.set_target(self.driver_ref.vehicle.vid, mode="chase")
 
         def chase_step():
-            self._update_chase_speed()
-            if emit_event:
-                self.write_event()
+            if not self._has_position_data():
+                return True
+            distance = self.position_data()
+            audibility = self.calculate_estimated_audibility(distance)
+            if audibility > self.PERCEPTIBILITY_THRESHOLD:
+                return False
+        
+        while (chase_step()):
+            self.main_tick.wait_next()
 
-        self.main_tick.waited_action_iterate(chase_step, max_frame=end_frame)
 
     @exceptions.interruptable
     def _update_random_event(self):
