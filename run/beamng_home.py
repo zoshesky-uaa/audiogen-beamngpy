@@ -12,13 +12,11 @@ BEAMNG_BINARY_PATHS = (
 class BeamNGHomeNotFound(RuntimeError):
     pass
 
-
 def has_beamng_binary(home):
     if not home:
         return False
     home_path = Path(home)
     return any((home_path / binary_path).is_file() for binary_path in BEAMNG_BINARY_PATHS)
-
 
 def resolve_beamng_home(configured_home=None):
     tried = []
@@ -36,7 +34,6 @@ def resolve_beamng_home(configured_home=None):
         f"Expected one of these files in the BeamNG home folder: {binaries}"
     )
 
-
 def _candidate_paths(configured_home):
     yield configured_home
     yield os.environ.get("BEAMNG_LOCATION")
@@ -46,7 +43,6 @@ def _candidate_paths(configured_home):
     yield from _user_profile_candidates()
     yield from _nearby_candidates()
     yield from _common_install_candidates()
-
 
 def _unique_paths(paths):
     seen = set()
@@ -60,7 +56,6 @@ def _unique_paths(paths):
         seen.add(key)
         yield normalized
 
-
 def _normalize_path(path):
     if path is None:
         return None
@@ -68,7 +63,6 @@ def _normalize_path(path):
     if not value:
         return None
     return Path(os.path.expandvars(os.path.expanduser(value)))
-
 
 def _common_install_candidates():
     names = ("BeamNG.tech", "BeamNG.drive")
@@ -88,14 +82,11 @@ def _common_install_candidates():
 
         yield from _matching_child_dirs(root, "beamng")
 
-
-
 def _nearby_candidates():
     for parent in (Path.cwd(), *Path.cwd().parents):
         yield parent / "BeamNG.tech"
         yield parent / "BeamNG.drive"
         yield from _matching_child_dirs(parent, "beamng")
-
 
 def _user_profile_candidates():
     user_folders = ("Downloads", "Desktop", "Documents", "Games")
@@ -104,7 +95,6 @@ def _user_profile_candidates():
         yield folder / "BeamNG.tech"
         yield folder / "BeamNG.drive"
         yield from _matching_child_dirs(folder, "beamng")
-
 
 def _registry_candidates():
     if os.name != "nt":

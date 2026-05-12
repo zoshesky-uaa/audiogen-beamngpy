@@ -40,7 +40,6 @@ def simulation_loop(scenario_count=None, training=None):
         try: 
             simulation.scenario_setup(ai=training)
             simulation.event_scheduler.simulate()
-
         except KeyboardInterrupt:
             print("\nInterrupted - shutting down...")
             if simulation is not None:
@@ -56,35 +55,45 @@ def simulation_loop(scenario_count=None, training=None):
                 simulation.invalidate_trial(f"Main thread error: {e}", stop_run=True)
 
         finally:            
-            # 2. Teardown happens if the trial was marked invalid
-            if simulation.trial_invalid.is_set() and not simulation.completed.is_set():
-                # Only do the heavy restart teardown if we aren't trying to exit the script entirely
-                if not fatal_error:
-                    print(f"Trial failed ({simulation.abort_reason}). Tearing down BeamNG for restart...")
+            if simulation.completed.is_set():
+                if not simulation.event_scheduler.fsm.validator.validate_file():
+                    simulation.event_scheduler.fsm.zarr_cleanup()
 
-            print(f"Cleaning up scenario: {simulation.project_name}")
-            try:
-                simulation.scenario_cleanup()
-            except Exception as e:
-                print(f"Error attempting cleanup: {e}")
+            simulation.scenario_cleanup()     
 
         # --- LOOP CONTROL RESOLUTION ---
         # Handled outside the try/except/finally structure to avoid Python overrides
-        
-        if fatal_error:
-            break  # Actually exits the while loop now
-            
-        if not simulation.trial_invalid.is_set():
-            scenario_count -= 1
-        else:
-            print(f"Retrying scenario {scenario_count}...")
+        # Ensure all threads have exited before next iteration or final shutdown
+        if (schedular := getattr(simulation, "event_scheduler", None)) and \
+                not schedular.tick.shutdown.is_set():
             try:
-                simulation.close()
+               schedular.join_all()
             except Exception as e:
-                print(f"Error during teardown close (Safe to ignore): {e}")
-            _wait_for_port_free("localhost", 25252) 
-            simulation.launch_beamng()  # Relaunch BeamNG for a fresh start on the next iteration
+                print(f"Error joining threads: {e}")  
+            
+        if not simulation.trial_invalid.is_set() and simulation.completed.is_set():
+            print(f"Trial completed: {simulation.project_name}")
+            scenario_count -= 1
+        elif not simulation.completed.is_set():
+            if fatal_error:
+                break  
+            print(f"Trial failed: {simulation.abort_reason}.")
+            print(f"Retrying scenario {simulation.project_name}...")
+            try:
+                simulation.beamng.close()
+                _wait_for_port_free("localhost", 25252) 
+                simulation.launch_beamng() 
+            except Exception as e:
+                print(f"Error during teardown close: {e}")
+        else:
+             
+            print(f"Trial incomplete: {simulation.project_name}")
+            print(f"Retrying scenario {simulation.project_name}...")
 
+        if fatal_error:
+                break 
+        
+        
     # Out of the loop
     print("Simulation sequence ended.")
     if simulation is not None:
@@ -128,6 +137,14 @@ class Simulation:
         self.zarr_path = self.base_path / f"{self.project_name}.zarr"
 
     def launch_beamng(self):
+        if os.name == 'nt':
+            try:
+                subprocess.call(['taskkill', '/F', '/IM', 'BeamNG.tech.x64.exe'], 
+                                stdout=subprocess.DEVNULL, 
+                                stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
+        self.beamng = None
         self.beamng = BeamNGpy(
             host="localhost",
             port=25252,
@@ -321,7 +338,8 @@ class Simulation:
             self.beamng.traffic.start(self._background_traffic)
 
     def scenario_cleanup(self):
-        if schedular := getattr(self, "event_scheduler", None):
+        if (schedular := getattr(self, "event_scheduler", None)) and \
+        not schedular.tick.shutdown.is_set():
             schedular.stop_all()
 
         if self._background_traffic:
@@ -376,7 +394,3 @@ class Simulation:
         self.scenario = None
         self.vehicle_controller = None
         self.process = None
-
-    def close(self):
-        self.scenario_cleanup()
-        self.beamng.close()
