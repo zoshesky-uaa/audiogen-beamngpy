@@ -4,7 +4,7 @@ import z5py
 import const
 import numpy as np
 import shutil  
-from run import scheduler
+from run import scheduler, validation
 
 class FSM:
     def __init__(self, tick, simulation=None):
@@ -55,6 +55,8 @@ class FSM:
             "zarr_path": str(self.simulation.zarr_path.as_posix()),
             **const.const_json["config"]
         }
+
+        self.validator = validation.ZarrValidator(self.simulation.zarr_path)
     
     def zarr_cleanup(self):
         if self.writer_thread is not None:

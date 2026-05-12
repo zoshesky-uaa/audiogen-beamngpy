@@ -264,6 +264,7 @@ class Scheduler:
         self.simulation.process.poll()
         if self.simulation.process.returncode is not None and self.simulation.process.returncode != 0:
             self.simulation.invalidate_trial(f"Binary exited with code {self.simulation.process.returncode}", stop_run=True)
+        
         if not self.simulation.trial_invalid.is_set():
             if self.fsm.writer_thread is not None:
                 join_thread(self.fsm.writer_thread)
@@ -272,9 +273,11 @@ class Scheduler:
     def stop_all(self):
         self.tick.stop()
         self.vehicle_update_tick.stop()
+
+    def join_all(self):
         for thread in self.threads:
             join_thread(thread)
-
+               
 # Seperate function for use elsewhere
 def join_thread(thread):
     if thread is threading.current_thread():
@@ -297,10 +300,15 @@ def start_guarded_thread(simulation, target, thread_name):
         try:
             target()
         except Exception as e:
+            err_name = type(e).__name__
             # Catch the stack-unwinding interrupt cleanly
-            if type(e).__name__ == "RestartInterrupt" or type(e).__name__ == "ShutdownInterrupt":
+            if err_name in ("RestartInterrupt", "ShutdownInterrupt"):
                 return 
-                
+
+            if simulation.completed.is_set() or simulation.trial_invalid.is_set():
+                if err_name in ("ConnectionResetError", "ConnectionAbortedError", "OSError", "BNGDisconnectedError"):
+                    return
+                    
             print(f"{thread_name} failed: {e}")
             traceback.print_exc()
             
