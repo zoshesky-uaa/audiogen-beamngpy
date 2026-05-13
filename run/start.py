@@ -32,18 +32,20 @@ STABLE_USER_SETTINGS = {
 
 def simulation_loop(scenario_count=None, training=None):
     print("Starting simulation...")
-    simulation = Simulation()   
+    simulation = Simulation()
+    fatal_error = False   
     while scenario_count >= 0:
-        # State trackers for this specific trial iteration
-        fatal_error = False
         print(f"Simulation count: {scenario_count}")
+
         try: 
             simulation.scenario_setup(ai=training)
             simulation.event_scheduler.simulate()
+
         except KeyboardInterrupt:
             print("\nInterrupted - shutting down...")
             if simulation is not None:
                 simulation.invalidate_trial("Interrupted by user", stop_run=True)
+                simulation.completed.clear()
             fatal_error = True
             
         except exceptions.RestartInterrupt as e:
@@ -53,52 +55,44 @@ def simulation_loop(scenario_count=None, training=None):
             print(f"\nUnexpected error in main thread: {e}")
             if simulation is not None:
                 simulation.invalidate_trial(f"Main thread error: {e}", stop_run=True)
+                simulation.completed.clear()
 
         finally:            
             if simulation.completed.is_set():
                 if not simulation.event_scheduler.fsm.validator.validate_file():
                     simulation.event_scheduler.fsm.zarr_cleanup()
 
-            simulation.scenario_cleanup()     
-
         # --- LOOP CONTROL RESOLUTION ---
         # Handled outside the try/except/finally structure to avoid Python overrides
         # Ensure all threads have exited before next iteration or final shutdown
-        if (schedular := getattr(simulation, "event_scheduler", None)) and \
-                not schedular.tick.shutdown.is_set():
-            try:
-               schedular.join_all()
-            except Exception as e:
-                print(f"Error joining threads: {e}")  
-            
+        
+        if fatal_error:
+            break     
         if not simulation.trial_invalid.is_set() and simulation.completed.is_set():
             print(f"Trial completed: {simulation.project_name}")
+            simulation.scenario_cleanup()
             scenario_count -= 1
         elif not simulation.completed.is_set():
-            if fatal_error:
-                break  
             print(f"Trial failed: {simulation.abort_reason}.")
             print(f"Retrying scenario {simulation.project_name}...")
             try:
+                simulation.scenario_cleanup()
                 simulation.beamng.close()
                 _wait_for_port_free("localhost", 25252) 
                 simulation.launch_beamng() 
             except Exception as e:
                 print(f"Error during teardown close: {e}")
         else:
-             
             print(f"Trial incomplete: {simulation.project_name}")
             print(f"Retrying scenario {simulation.project_name}...")
-
-        if fatal_error:
-                break 
         
         
     # Out of the loop
     print("Simulation sequence ended.")
     if simulation is not None:
         try:
-            simulation.close()
+            simulation.scenario_cleanup()
+            simulation.beamng.close()
         except Exception as e:
             print(f"Error closing simulation: {e}")
 
@@ -337,11 +331,19 @@ class Simulation:
         if self._background_traffic and self.trial_invalid:
             self.beamng.traffic.start(self._background_traffic)
 
-    def scenario_cleanup(self):
-        if (schedular := getattr(self, "event_scheduler", None)) and \
-        not schedular.tick.shutdown.is_set():
-            schedular.stop_all()
+    def close_threads(self):
+            try:
+               if (schedular := getattr(self, "event_scheduler", None)) and \
+                not schedular.tick.shutdown.is_set():
+                    schedular.stop_all()
+                    sleep(10)
+               elif (schedular := getattr(self, "event_scheduler", None)):
+                    schedular.join_all()
+            except Exception as e:
+                print(f"Error joining threads: {e}")  
 
+    def scenario_cleanup(self):
+        self.close_threads()
         if self._background_traffic:
             try:
                 # Don't believe this does anything since the vehicles aren't techincally "traffic" AI

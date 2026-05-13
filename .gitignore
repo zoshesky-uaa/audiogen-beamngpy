@@ -10,3 +10,4 @@
 /.conda
 /tools/__pycache__
 /tools/dataset_validation_report.txt
+/spawns/__pycache__

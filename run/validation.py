@@ -21,7 +21,7 @@ class ZarrValidator:
         errors = []
         stats = {}
 
-        if not self.zarr_path.is_file():
+        if not self.zarr_path.is_dir():
             print(f"Skipping validation as {self.zarr_path} does not exist or is not a file")
             return True
         

@@ -2,6 +2,7 @@ import math
 import random
 import const
 from run import exceptions
+from time import sleep
 
 class VehicleSoundEvent:
     PERCEPTIBILITY_THRESHOLD = 0.01
@@ -63,20 +64,16 @@ class VehicleSoundEvent:
         )
     
     def _wait_for_position(self):
-        print(f"CE({self.class_index}), TE({self.track_index}): Waiting for position data to become available...")
         while not self._has_position_data():
-            self.main_tick.wait_next(self.main_tick.frame_index)
+            sleep(1)
         return True
     
     def random_empty(self):
-        if not getattr(self.vehicle_ref, "alive", True) or not getattr(self.driver_ref, "alive", True):
-            return
-        print(f"CE({self.class_index}), TE({self.track_index}): Starting empty event at recording frame {self.main_tick.frame_index}.")
-        # 12 seconds to 24 seconds
+        # print(f"CE({self.class_index}), TE({self.track_index}): Starting empty event at recording frame {self.main_tick.frame_index}.")
+        # 18 seconds to 36 seconds
         event_end_frame = self.main_tick.frame_index + math.floor(
-            random.uniform(4 * const.t_prime, 8 * const.t_prime)
+            random.uniform(6 * const.t_prime, 12 * const.t_prime)
         )
-
         self.main_tick.waited_action_iterate(max_frame=event_end_frame)
 
     def random_sound_event(self):
@@ -146,12 +143,13 @@ class VehicleSoundEvent:
         self.vehicle_ref.vehicle.ai.set_target(self.driver_ref.vehicle.vid, mode="chase")
 
         def chase_step():
-            if not self._has_position_data():
-                return True
-            distance = self.position_data()
-            audibility = self.calculate_estimated_audibility(distance)
-            if audibility > self.PERCEPTIBILITY_THRESHOLD:
-                return False
+            if (self._wait_for_position()):
+                distance = self.position_data()
+                audibility = self.calculate_estimated_audibility(distance)
+                if audibility > self.PERCEPTIBILITY_THRESHOLD:
+                    return False
+                else:
+                    return True
         
         while (chase_step()):
             self.main_tick.wait_next()

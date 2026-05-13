@@ -210,7 +210,7 @@ class Scheduler:
         try:
             for line in self.simulation.process.stdout:
                 if self.simulation.trial_invalid.is_set():
-                    print("\n[ACCDOA] Aborting read loop: Trial was invalidated by a background thread.")
+                    print("\n[Python] Aborting read loop: Trial was invalidated by a background thread.")
                     break
                 line = line.strip()
                 if not line:
@@ -234,7 +234,7 @@ class Scheduler:
                         timeout = time() + 5.0
                         while (self.fsm.sed_queue) and time() < timeout:
                             sleep(0.1)
-                        self.tick.stop()
+                        self.stop_all()
                         break 
 
                     case "TICK" if started and len(parts) == 2:

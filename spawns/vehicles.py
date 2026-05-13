@@ -276,7 +276,7 @@ class Vehicle_Reference:
         if control:
             if driver:
                 print(f"Driver vehicle {self.vid} initialized")
-                self.thread = scheduler.start_guarded_thread(self.simulation, self.driver_run, f"Driver control thread {self.vid}")
+                self.thread = scheduler.start_guarded_thread(self.simulation, self.run, f"Driver control thread {self.vid}")
             else:
                 print(f"Sound event vehicle {self.vid} initialized")
                 self.thread = scheduler.start_guarded_thread(self.simulation, self.run, f"Vehicle control thread {self.vid}")
@@ -285,17 +285,15 @@ class Vehicle_Reference:
         self.tick.waited_action()
         self.tick.waited_action_iterate(self.update, cond_func=lambda: self.alive)
 
-    def driver_run(self):
-        self.tick.waited_action()
-        self.tick.waited_action_iterate(self.update, cond_func=lambda: self.alive)
-
     def _read_state(self):
         self.vehicle.sensors.poll("state")
         state = self.vehicle.state
         position = state.get("pos")  
-        velocity = state.get("vel")    
+        velocity = state.get("vel")   
+        if position is None or velocity is None:  
+            raise RuntimeError("Vehicle state was unavailable during update") 
         return position, velocity
- 
+    
     def update(self):
         if not self.alive:
             return    
@@ -303,14 +301,16 @@ class Vehicle_Reference:
             position, velocity = self._read_state()
             self.state_available = True
             self.state = VehicleState(position, velocity, 0.0, 0.0, 0.0, (0.0, 0.0, 0.0, 0.0))
-            
+
+        except (BNGError, BNGDisconnectedError, OSError, ConnectionError) as e:  
+            self.alive = False  
+            self.state_available = False  
+            self.simulation.invalidate_trial(f"Vehicle {self.vid} disconnected: {e}", stop_run=True)  
+
         except Exception as e:
+            self.alive = False 
             self.state_available = False
-            
-            # Fatal socket disconnect: Invalidate the trial directly and kill thread
-            if "connect" in str(e).lower() or "not connected" in str(e).lower():
-                self.alive = False
-                self.simulation.invalidate_trial(f"Vehicle {self.vid} disconnected: {e}", stop_run=True)
+            self.simulation.invalidate_trial(f"Unknown vehicle state error for {self.vid}: {e}", stop_run=True)  
 
 
 POLICE = [
