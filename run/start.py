@@ -337,7 +337,7 @@ class Simulation:
                 not schedular.tick.shutdown.is_set():
                     schedular.stop_all()
                     sleep(10)
-               elif (schedular := getattr(self, "event_scheduler", None)):
+               if (schedular := getattr(self, "event_scheduler", None)):
                     schedular.join_all()
             except Exception as e:
                 print(f"Error joining threads: {e}")  

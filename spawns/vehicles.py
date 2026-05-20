@@ -238,7 +238,13 @@ class builder:
         # Driver must have a position before the scenario is loaded and loaded before scenario is made,
         # So therefore I had to extract random positions, getting a better list is ideal
         spawn = self.simulation.environment.random_location()
-        driver = random.choice(NORMAL)
+        template = random.choice(NORMAL)
+        driver = Vehicle(
+                vid="Driver",
+                model=template.options.get("model"),
+                part_config=template.options.get("partConfig"),
+                licence="DRIVER",
+            )
         # Store the driver reference
         self.simulation.scenario.add_vehicle(driver, pos=spawn[0], rot_quat=spawn[1], cling=True)
         self.accepted_spawn_positions.append(spawn[0])

@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 import numpy as np
-import zarr
+import z5py
 import shutil
 # Adjust this to match your specific repository structure
 root_dir = Path(__file__).resolve().parent.parent
@@ -28,7 +28,7 @@ class ZarrValidator:
 
     def validate_file(self, zarr_path: Path) -> Tuple[bool, List[str], Dict]:
         """Runs structural and sparsity checks on a single Zarr file."""
-        root = zarr.open_group(zarr_path, mode="r")
+        root = z5py.File(zarr_path, use_zarr_format=True)
         errors = []
         stats = {}
         

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import numpy as np
-import zarr
+import z5py
 import const
 
 class ZarrValidator:
@@ -26,7 +26,7 @@ class ZarrValidator:
             return True
         
         try:
-            root = zarr.open_group(self.zarr_path, mode="r")
+            root = z5py.File(self.zarr_path, use_zarr_format=True)
         except Exception as e:
             print(f"Skipping validation as {self.zarr_path} is not a valid file")
             return True

@@ -42,6 +42,8 @@ class DriverRecorder:
         self.driver_ref.vehicle.sensors.poll() 
         damage_data = self.driver_ref.vehicle.sensors['damage']  
         damage_value = damage_data.get('damage', 0)  
-        if damage_value > 0.01:
+
+        if damage_value > 0.1:
+            print(f"Driver damaged with damage value: {damage_value}. Invalidating trial.")
             self.simulation.invalidate_trial(f"Driver damaged, test invalidated.", stop_run=True)
 
