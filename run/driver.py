@@ -24,9 +24,11 @@ class DriverRecorder:
         if not getattr(self.driver_ref, "alive", True):
             return
         self.simulation.beamng.vehicles.switch(self.driver_ref.vehicle)
+        self.simulation.beamng.ui.hide_hud()  
+        self.simulation.beamng.camera.set_player_mode(self.driver_ref.vehicle, "driver", {}) 
         if ai:
             self.normal_behavior()
-        print("Driver connected.")
+        print("Driver connected,")
         self.main_tick.waited_action_iterate(self.damage_check)
 
     def normal_behavior(self):
