@@ -181,11 +181,15 @@ class Scheduler:
             bufsize=1
         )
 
+        proc = self.simulation.process
+
         def send_exit():
-            if self.simulation.process.poll() is None and self.simulation.process.stdin:
+            if proc is None:
+                return
+            if proc.poll() is None and proc.stdin:
                 try:
-                    self.simulation.process.stdin.write("exit\n")
-                    self.simulation.process.stdin.flush()
+                    proc.stdin.write("exit\n")
+                    proc.stdin.flush()
                 except (BrokenPipeError, OSError):
                     pass
 
