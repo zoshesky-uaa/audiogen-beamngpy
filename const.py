@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 # Optional BeamNG home override. Leave unset for automatic discovery.
 
 BEAMNG_LOCATION_OVERRIDE = r"E:\BeamNG.tech.v0.38.3.0" 
@@ -15,6 +16,7 @@ MAXIMUM_TRAFFIC_VEHICLES = 8
 MAXIMUM_SPAWN_WAIT_TIME_SECONDS = 120
 
 GEN_BINARY_PATH = "bin/accdoa_gen.exe" 
+TRAIN_BINARY_PATH = "bin_train/accdoa_train.exe"
 
 sample_rate = 16000 # Sample rate for audio capture (e.g., 16000 Hz)
 fft_size = 512 # FFT size for the STFT
@@ -25,6 +27,8 @@ batch_size = 24 # Batch size for training
 se_count = 3 # Maximum unique sound events for SED head
 track_count = 3 # Maximum amount of overlapping events for DOAE head
 
+project_root = Path(__file__).resolve().parent
+trial_path = (project_root / 'trials').resolve()
 
 # Calculated/Constant parameters:
 epochs = 50 # Number of training epochs
@@ -35,6 +39,11 @@ time_window = 3 # Time window for each training sample in seconds (e.g., 3 secon
 patch_size = 16 # Patch size (P) (h x w kernel)
 patch_overlap = 6 # Patch overlap (O) 
 enc_layers = 12 # Encoder layers (L) 
+learning_rate = 5e-5 # Learning rate for the optimizer
+dropout = 0.3 # Dropout rate for regularization
+weight_decay = 0.05 # Weight decay for regularization
+validation_threshold = 0.5 # Threshold for validation metrics (e.g., F1-score) for detection of vehicle
+validation_lowest = 0.354914 # Lowest validation scored so far
 # --------------------------------
 # These are specific dimension for distilling from other transformer models:
 att_headers = 12; # Attention heads (h) : 12 
@@ -86,6 +95,8 @@ doa_label_buffer_dim = (1, t_prime, int(se_count * track_count * 2)) # DOA label
 
 MAXIMUM_VEHICLES = track_count * se_count # Maximum total vehicles in the simulation, considering all classes
 
+def patch_grid():
+    return (n_f, n_t)
 
 const_json = {    
     "config": {
@@ -120,6 +131,11 @@ const_json = {
         "n_f": n_f,
         "num_patches": num_patches,
         "total_seq": total_seq,
+        "learning_rate": learning_rate,
+        "dropout": dropout,
+        "weight_decay": weight_decay,
+        "validation_threshold": validation_threshold,
+        "validation_lowest": validation_lowest,
         
         # Lists/Tuples natively convert to std::vector in nlohmann
         "sed_fet_buffer_dim": list(sed_fet_buffer_dim),

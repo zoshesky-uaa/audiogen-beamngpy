@@ -39,7 +39,14 @@ class ZarrValidator:
             return False, errors, stats
 
         # 2. Label Sparsity, Class Distribution, and Per-Batch Checks
-        sed_arr = root["sed_labels"]
+        try:
+            sed_arr = root["sed_labels"]
+        except RuntimeError as e:
+            if "no metadata existing" in str(e).lower():
+                errors.append("Missing dataset metadata for sed_labels.")
+                shutil.rmtree(zarr_path)
+                return False, errors, stats
+            raise
         if sed_arr.size == 0:
             errors.append("sed_labels is completely empty.")
         else:
@@ -146,7 +153,10 @@ class ZarrValidator:
             if not is_good:
                 for err in errors:
                     report_lines.append(f"  ! ERROR: {err}, file will be deleted.")
-                shutil.rmtree(file_path)
+                try:
+                    shutil.rmtree(file_path)
+                except FileNotFoundError:
+                    pass
             else:
                 passed_count += 1
                 
