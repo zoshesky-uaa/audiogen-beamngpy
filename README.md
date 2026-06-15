@@ -2,6 +2,11 @@
 ## Intial Setup
 The project utilizes conda for it's environment as there is specific conda_forge packages we utilize, notably z5. z5 is a C++ lightweight Zarr file handler, it also operates on Version 2 Zarr files whilst other packages are Version 3. As our feature extraction is a C++ binary we've decided to keep using z5 even for the python interface code for simplicity.
 
+Clone the repository:
+```shell
+git clone https://github.com/zoshesky-uaa/ACCDOA-libtorch.git
+```
+
 ### Conda Setup
 First have conda (miniconda, etc.) installed, then:
 1. Begin by making an environment in conda based on the requirements YAML.
