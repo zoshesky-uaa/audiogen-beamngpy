@@ -16,7 +16,6 @@ MAXIMUM_TRAFFIC_VEHICLES = 8
 MAXIMUM_SPAWN_WAIT_TIME_SECONDS = 120
 
 GEN_BINARY_PATH = "bin/accdoa_gen.exe" 
-TRAIN_BINARY_PATH = "bin_train/accdoa_train.exe"
 
 sample_rate = 16000 # Sample rate for audio capture (e.g., 16000 Hz)
 fft_size = 512 # FFT size for the STFT
@@ -43,7 +42,7 @@ learning_rate = 1e-5 # Learning rate for the optimizer
 dropout = 0.3 # Dropout rate for regularization
 weight_decay = 0.1 # Weight decay for regularization
 validation_threshold = 0.5 # Threshold for validation metrics (e.g., F1-score) for detection of vehicle
-validation_lowest =  0.6 # Lowest validation scored so far
+validation_lowest =  1 # Lowest validation scored so far
 mixup_alpha = 0.5 # Alpha parameter for Mixup augmentation 
 noise_std = 0.1 # Standard deviation for Gaussian noise augmentation 
 # --------------------------------
