@@ -4,7 +4,7 @@ The project utilizes conda for it's environment as there is specific conda_forge
 
 Clone the repository:
 ```shell
-git clone https://github.com/zoshesky-uaa/ACCDOA-libtorch.git
+git clone https://github.com/zoshesky-uaa/audiogen-beamngpy.git
 ```
 
 ### Conda Setup
