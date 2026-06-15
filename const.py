@@ -39,11 +39,13 @@ time_window = 3 # Time window for each training sample in seconds (e.g., 3 secon
 patch_size = 16 # Patch size (P) (h x w kernel)
 patch_overlap = 6 # Patch overlap (O) 
 enc_layers = 12 # Encoder layers (L) 
-learning_rate = 5e-5 # Learning rate for the optimizer
+learning_rate = 1e-5 # Learning rate for the optimizer
 dropout = 0.3 # Dropout rate for regularization
-weight_decay = 0.05 # Weight decay for regularization
+weight_decay = 0.1 # Weight decay for regularization
 validation_threshold = 0.5 # Threshold for validation metrics (e.g., F1-score) for detection of vehicle
-validation_lowest = 0.354914 # Lowest validation scored so far
+validation_lowest =  0.6 # Lowest validation scored so far
+mixup_alpha = 0.5 # Alpha parameter for Mixup augmentation 
+noise_std = 0.1 # Standard deviation for Gaussian noise augmentation 
 # --------------------------------
 # These are specific dimension for distilling from other transformer models:
 att_headers = 12; # Attention heads (h) : 12 

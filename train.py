@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import math
 import time
 from pathlib import Path
 
 import torch
-
 import const
 
 try:
@@ -41,15 +41,66 @@ def adjust_learning_rate(
         group["lr"] = new_lr
 
 
-def compute_f1(pred: torch.Tensor, target: torch.Tensor, threshold: float) -> float:
-    binary = (pred > threshold).to(torch.float32)
-    tp = (binary * target).sum().item()
-    fp = (binary * (1.0 - target)).sum().item()
-    fn = ((1.0 - binary) * target).sum().item()
+def compute_f1(
+    sed_pred: torch.Tensor, 
+    sed_target: torch.Tensor, 
+    threshold: float,
+    doa_pred: torch.Tensor = None,
+    doa_target: torch.Tensor = None
+) -> float:
+    """
+    Computes standard SED F1 or Location-Dependent F20 Score based on available targets.
+    Returns: float (the calculated F1 or F20 metric)
+    """
+    # 1. Binarize SED predictions based on the validation threshold
+    sed_binary = (sed_pred > threshold).to(torch.float32)
+    
+    # 2. If no DOA tensors are provided, compute standard semantic SED F1
+    if doa_pred is None or doa_target is None:
+        tp = (sed_binary * sed_target).sum().item()
+        fp = (sed_binary * (1.0 - sed_target)).sum().item()
+        fn = ((1.0 - sed_binary) * sed_target).sum().item()
+        
+        precision = tp / (tp + fp + 1e-8)
+        recall = tp / (tp + fn + 1e-8)
+        return 2.0 * (precision * recall) / (precision + recall + 1e-8)
 
-    precision = tp / (tp + fp + 1e-8)
-    recall = tp / (tp + fn + 1e-8)
-    return 2.0 * (precision * recall) / (precision + recall + 1e-8)
+    # 3. If DOA tensors are provided, compute Location-Dependent F20 Score
+    batch_size, time_steps, _ = doa_pred.shape
+    
+    # Reshape flattened Cartesian coordinates: [B, T, Classes*2] -> [B, T, Classes, 2]
+    p_cart = doa_pred.view(batch_size, time_steps, -1, 2)
+    g_cart = doa_target.view(batch_size, time_steps, -1, 2)
+    
+    # Normalize vectors to unit length for accurate angular math (predictions aren't spatially perfect)
+    p_norm = torch.nn.functional.normalize(p_cart, p=2, dim=-1)
+    g_norm = torch.nn.functional.normalize(g_cart, p=2, dim=-1)
+    
+    # Dot product along the spatial coordinate dimensions (X, Y)
+    dot_product = (p_norm * g_norm).sum(dim=-1)
+    
+    # Clamp to safely handle floating-point drift out of arccos bounds
+    dot_product = torch.clamp(dot_product, -1.0 + 1e-7, 1.0 - 1e-7)
+    
+    # Calculate angular error in degrees
+    angular_dist = torch.acos(dot_product) * (180.0 / math.pi)
+    
+    # Spatial tolerance gate: 1.0 if within 40 degrees, else 0.0  (F40 threshold)
+    spatial_mask = (angular_dist <= 40.0).to(torch.float32)
+    
+    # Location-Dependent True Positives: Event detected AND active in ground truth AND spatial error <= 40°
+    f40_tp = (sed_binary * sed_target * spatial_mask).sum().item()
+    
+    # Location-Dependent False Positives: Predicted event, but it didn't exist OR was outside the 40° boundary
+    f40_fp = (sed_binary * (1.0 - (sed_target * spatial_mask))).sum().item()
+    
+    # Location-Dependent False Negatives: True event existed, but was missed OR predicted outside the 40° boundary
+    f40_fn = (sed_target * (1.0 - (sed_binary * spatial_mask))).sum().item()
+    
+    f40_precision = f40_tp / (f40_tp + f40_fp + 1e-8)
+    f40_recall = f40_tp / (f40_tp + f40_fn + 1e-8)
+    
+    return 2.0 * (f40_precision * f40_recall) / (f40_precision + f40_recall + 1e-8)
 
 
 def train_on_zarr(
@@ -66,14 +117,15 @@ def train_on_zarr(
     total_val_loss = 0.0
     total_f1 = 0.0
 
-    def fetch_batch():
+    def fetch_batch(is_val: bool = False):
         valid_mask = [False] * config.batch_size
+        apply_aug = not is_val
         if model_type.name == "SED":
-            x_in = reader.sed_featureset.batch(valid_mask_out=valid_mask)
+            x_in = reader.sed_featureset.batch(valid_mask_out=valid_mask, apply_augment=apply_aug)
             sed_target = reader.sed_labelset.batch(force_silence_mask=valid_mask)
             doa_target = None
         else:
-            x_in = reader.doa_featureset.batch(valid_mask_out=valid_mask)
+            x_in = reader.doa_featureset.batch(valid_mask_out=valid_mask, apply_augment=apply_aug)
             doa_target = reader.doa_labelset.batch(force_silence_mask=valid_mask)
             sed_target = reader.sed_labelset.batch(force_silence_mask=valid_mask)
         return x_in, sed_target, doa_target
@@ -81,6 +133,11 @@ def train_on_zarr(
     model.train()
     for _ in range(train_batches):
         x_in, sed_target, doa_target = fetch_batch()
+        x_in, sed_target, doa_target = apply_mixup_and_noise(
+            x_in, sed_target, doa_target, 
+            alpha=config.mixup_alpha,      
+            noise_std=config.noise_std  
+        )
         optimizer.zero_grad(set_to_none=True)
         prediction = model(x_in)
         loss = model.compute_loss(prediction, sed_target, doa_target)
@@ -92,13 +149,18 @@ def train_on_zarr(
     model.eval()
     with torch.no_grad():
         for _ in range(val_batches):
-            x_in, sed_target, doa_target = fetch_batch()
+            x_in, sed_target, doa_target = fetch_batch(is_val=True)
             prediction = model(x_in)
             val_loss = model.compute_loss(prediction, sed_target, doa_target)
             total_val_loss += float(val_loss.detach().cpu().item())
             if model_type.name == "SED":
                 s_target = sed_target.squeeze(1)
                 total_f1 += compute_f1(prediction, s_target, config.validation_threshold)
+            else: 
+                s_target = sed_target.squeeze(1)
+                ground_sed_pred = s_target.clone()
+                d_target = doa_target.squeeze(1)
+                total_f1 += compute_f1(ground_sed_pred, s_target, config.validation_threshold, prediction, d_target)
 
     reader.reset()
 
@@ -115,21 +177,64 @@ def format_hms(seconds: float) -> str:
     secs = seconds % 60
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
+import torch.distributions as dist
+def apply_mixup_and_noise(
+    x: torch.Tensor, 
+    sed_target: torch.Tensor, 
+    doa_target: torch.Tensor = None, 
+    alpha: float = 0.2, 
+    noise_std: float = 0.05
+):
+    """
+    Applies Gaussian noise and MixUp to a batch of features and labels.
+    """
+    batch_size = x.size(0)
+    
+    # 1. Dynamic Noise Injection
+    # Adds a tiny layer of Gaussian static to blur synthetic crispness
+    noise = torch.randn_like(x) * noise_std
+    x = x + noise
+    
+    # 2. MixUp
+    # Sample a mixing ratio (lambda) from a Beta distribution
+    # alpha=0.2 means lambda is usually close to 0 or 1 (light mixing)
+    if alpha > 0:
+        beta = dist.Beta(alpha, alpha)
+        lam = beta.sample().item()
+        
+        # Create a shuffled index array
+        index = torch.randperm(batch_size, device=x.device)
+        
+        # Blend the features
+        x_mixed = lam * x + (1 - lam) * x[index]
+        
+        # Blend the labels perfectly synchronously
+        sed_mixed = lam * sed_target + (1 - lam) * sed_target[index]
+        
+        if doa_target is not None:
+            doa_mixed = lam * doa_target + (1 - lam) * doa_target[index]
+        else:
+            doa_mixed = None
+            
+        return x_mixed, sed_mixed, doa_mixed
+        
+    return x, sed_target, doa_target
 
 def run_stage(
     config,
     zarr_dir: Path,
     zarr_amount: int,
-    model_type,
     save_path: Path,
     device: torch.device,
     deit_init: bool,
     deit_model: str,
+    model_type: str,
     deit_pretrained: bool,
     M2MAST,
     ZarrReader,
 ) -> None:
-    stage_name = "SED" if model_type.name == "SED" else "DOA"
+    stage_name = "SED" if model_type == "SED" else "DOA"
+    model_type = ModelType.SED if model_type == "SED" else ModelType.DOA
     print(f"Starting {stage_name} training for {zarr_amount} zarr files.")
 
     model = M2MAST(config, model_type).to(device)
@@ -191,7 +296,7 @@ def run_stage(
 
         epoch_train_loss /= max(zarr_amount, 1)
         epoch_val_loss /= max(zarr_amount, 1)
-
+        
         epoch_seconds = time.time() - epoch_start
         total_epoch_seconds += epoch_seconds
         completed_epochs += 1
@@ -220,6 +325,7 @@ def run_stage(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train ACCDOA M2M-AST model in PyTorch")
+    parser.add_argument("--model-type", type=str, default="SED", choices=["SED", "DOA"])
     parser.add_argument("--zarr-dir", type=Path, default=const.trial_path)
     parser.add_argument("--zarr-amount", type=int)
     parser.add_argument("--save-sed", type=Path, default=Path("m2m_ast_sed.pt"))
@@ -249,24 +355,11 @@ def main() -> None:
         config,
         zarr_dir,
         zarr_amount,
-        ModelType.SED,
-        args.save_sed,
+        args.save_sed if args.model_type == "SED" else args.save_doa,
         device,
         args.deit_init,
         args.deit_model,
-        not args.deit_no_pretrained,
-        M2MAST,
-        ZarrReader,
-    )
-    run_stage(
-        config,
-        zarr_dir,
-        zarr_amount,
-        ModelType.DOA,
-        args.save_doa,
-        device,
-        args.deit_init,
-        args.deit_model,
+        args.model_type,
         not args.deit_no_pretrained,
         M2MAST,
         ZarrReader,

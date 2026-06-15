@@ -1,3 +1,5 @@
+m2m_ast_doa.pt
+m2m_ast_sed.pt
 /.conda
 /__pycache__
 *.pyc
@@ -12,3 +14,4 @@
 /tools/dataset_validation_report.txt
 /tools/feature_validation_report.txt
 /spawns/__pycache__
+/train/__pycache__

@@ -101,7 +101,7 @@ class ZarrBatcher:
         np.copyto(self.read_buffer, data)
         return True
     
-    def apply_spec_augment(tensor: torch.Tensor, max_f_mask: int = 25, max_t_mask: int = 40):
+    def apply_spec_augment(self, tensor: torch.Tensor, max_f_mask: int = 25, max_t_mask: int = 40):
         # tensor shape: [Channels, Time, Freq]
         _, time_steps, freq_bins = tensor.shape
         
@@ -123,6 +123,7 @@ class ZarrBatcher:
         self,
         valid_mask_out: Optional[list[bool]] = None,
         force_silence_mask: Optional[list[bool]] = None,
+        apply_augment: bool = False,
     ) -> torch.Tensor:
         if valid_mask_out is not None:
             valid_mask_out[:] = [False] * self.batch_size
@@ -144,9 +145,8 @@ class ZarrBatcher:
                 valid_mask_out[batch_idx] = chunk_valid
 
             chunk_tensor = torch.from_numpy(self.read_buffer)
-            if self.dataset_type in (DatasetType.SED_FEATURES, DatasetType.DOA_FEATURES) and chunk_valid:
-                        self.read_buffer = self.apply_spec_augment(chunk_tensor)
-
+            if apply_augment and self.dataset_type in (DatasetType.SED_FEATURES, DatasetType.DOA_FEATURES):
+                            chunk_tensor = self.apply_spec_augment(chunk_tensor)
             self.x_in[batch_idx].copy_(chunk_tensor, non_blocking=use_cuda)
 
         return self.x_in
