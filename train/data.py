@@ -10,7 +10,6 @@ import torch
 
 from .config import Config
 
-
 class DatasetType(str, Enum):
     SED_FEATURES = "sed_features"
     DOA_FEATURES = "doa_features"
@@ -52,7 +51,7 @@ class ZarrBatcher:
         chunk_shape: Iterable[int],
         batch_size: int,
         device: torch.device,
-        dataset_type: DatasetType,
+        dataset_type: DatasetType
     ) -> None:
         self.ds = ds
         self.chunk_shape = tuple(int(x) for x in chunk_shape)
@@ -101,34 +100,16 @@ class ZarrBatcher:
         np.copyto(self.read_buffer, data)
         return True
     
-    def apply_spec_augment(self, tensor: torch.Tensor, max_f_mask: int = 25, max_t_mask: int = 40):
-        # tensor shape: [Channels, Time, Freq]
-        _, time_steps, freq_bins = tensor.shape
-        
-        # Frequency masking
-        if random.random() < 0.5:
-            f_width = random.randint(1, max_f_mask)
-            f_start = random.randint(0, freq_bins - f_width)
-            tensor[:, :, f_start:f_start + f_width] = -7.0 # Your silence baseline
-            
-        # Time masking
-        if random.random() < 0.5:
-            t_width = random.randint(1, max_t_mask)
-            t_start = random.randint(0, time_steps - t_width)
-            tensor[:, t_start:t_start + t_width, :] = -7.0
-            
-        return tensor
-    
     def batch(
         self,
         valid_mask_out: Optional[list[bool]] = None,
-        force_silence_mask: Optional[list[bool]] = None,
-        apply_augment: bool = False,
+        force_silence_mask: Optional[list[bool]] = None
     ) -> torch.Tensor:
         if valid_mask_out is not None:
             valid_mask_out[:] = [False] * self.batch_size
 
         use_cuda = self.device.type == "cuda"
+        
         for batch_idx in range(self.batch_size):
             chunk_valid = False
             if force_silence_mask is not None and not force_silence_mask[batch_idx]:
@@ -144,17 +125,18 @@ class ZarrBatcher:
             if valid_mask_out is not None:
                 valid_mask_out[batch_idx] = chunk_valid
 
+            # Create CPU tensor view of the numpy buffer
             chunk_tensor = torch.from_numpy(self.read_buffer)
-            if apply_augment and self.dataset_type in (DatasetType.SED_FEATURES, DatasetType.DOA_FEATURES):
-                            chunk_tensor = self.apply_spec_augment(chunk_tensor)
+            
+            # GPU Transfer
             self.x_in[batch_idx].copy_(chunk_tensor, non_blocking=use_cuda)
 
         return self.x_in
 
-
 class ZarrReader:
     def __init__(self, path: Path, config: Config, device: torch.device) -> None:
         root = _open_group(path)
+        
         self.sed_featureset = ZarrBatcher(
             root[DatasetType.SED_FEATURES.value],
             config.sed_fet_buffer_dim,
@@ -189,3 +171,4 @@ class ZarrReader:
         self.doa_featureset.read_reset()
         self.sed_labelset.read_reset()
         self.doa_labelset.read_reset()
+

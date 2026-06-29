@@ -7,6 +7,7 @@ from pathlib import Path
 
 import torch
 import const
+from train.augment import Augmenter
 
 try:
     from train.data import ZarrReader
@@ -20,6 +21,17 @@ except ModuleNotFoundError as exc:
 def _count_trials(trial_dir: Path) -> int:
     return sum(1 for path in trial_dir.glob("trial_*.zarr") if path.exists())
 
+
+import atexit
+def _cleanup_cuda(device_type: str) -> None:
+    """Registered via atexit to ensure VRAM is flushed on script termination."""
+    if device_type == "cuda":
+        try:
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            print("\n[Cleanup] CUDA memory successfully cleared.")
+        except Exception:
+            pass
 
 def adjust_learning_rate(
     optimizer: torch.optim.Optimizer,
@@ -109,6 +121,7 @@ def train_on_zarr(
     reader,
     optimizer: torch.optim.Optimizer,
     model_type,
+    augmenter: Augmenter = None
 ) -> tuple[float, float, float]:
     train_batches = int((config.batch_amount * 4) / 5)
     val_batches = int(config.batch_amount - train_batches)
@@ -121,11 +134,11 @@ def train_on_zarr(
         valid_mask = [False] * config.batch_size
         apply_aug = not is_val
         if model_type.name == "SED":
-            x_in = reader.sed_featureset.batch(valid_mask_out=valid_mask, apply_augment=apply_aug)
+            x_in = reader.sed_featureset.batch(valid_mask_out=valid_mask)
             sed_target = reader.sed_labelset.batch(force_silence_mask=valid_mask)
             doa_target = None
         else:
-            x_in = reader.doa_featureset.batch(valid_mask_out=valid_mask, apply_augment=apply_aug)
+            x_in = reader.doa_featureset.batch(valid_mask_out=valid_mask)
             doa_target = reader.doa_labelset.batch(force_silence_mask=valid_mask)
             sed_target = reader.sed_labelset.batch(force_silence_mask=valid_mask)
         return x_in, sed_target, doa_target
@@ -133,11 +146,8 @@ def train_on_zarr(
     model.train()
     for _ in range(train_batches):
         x_in, sed_target, doa_target = fetch_batch()
-        x_in, sed_target, doa_target = apply_mixup_and_noise(
-            x_in, sed_target, doa_target, 
-            alpha=config.mixup_alpha,      
-            noise_std=config.noise_std  
-        )
+        x_in, sed_target, doa_target = augmenter(x_in, sed_target, doa_target)
+        
         optimizer.zero_grad(set_to_none=True)
         prediction = model(x_in)
         loss = model.compute_loss(prediction, sed_target, doa_target)
@@ -185,34 +195,26 @@ def apply_mixup_and_noise(
     alpha: float = 0.2, 
     noise_std: float = 0.05
 ):
-    """
-    Applies Gaussian noise and MixUp to a batch of features and labels.
-    """
     batch_size = x.size(0)
     
-    # 1. Dynamic Noise Injection
-    # Adds a tiny layer of Gaussian static to blur synthetic crispness
-    noise = torch.randn_like(x) * noise_std
-    x = x + noise
+    # 1. Noise Injection (Keep this: great for blurring synthetic sharpness)
+    if noise_std > 0:
+        x = x + torch.randn_like(x) * noise_std
     
-    # 2. MixUp
-    # Sample a mixing ratio (lambda) from a Beta distribution
-    # alpha=0.2 means lambda is usually close to 0 or 1 (light mixing)
+    # 2. MixUp Block
     if alpha > 0:
         beta = dist.Beta(alpha, alpha)
         lam = beta.sample().item()
-        
-        # Create a shuffled index array
         index = torch.randperm(batch_size, device=x.device)
         
-        # Blend the features
+        # Always mix features and SED targets
         x_mixed = lam * x + (1 - lam) * x[index]
-        
-        # Blend the labels perfectly synchronously
         sed_mixed = lam * sed_target + (1 - lam) * sed_target[index]
         
+        # IF DOA training, do NOT linearly blend the coordinates.
+        # Keep the dominant target's coordinates based on lambda.
         if doa_target is not None:
-            doa_mixed = lam * doa_target + (1 - lam) * doa_target[index]
+            doa_mixed = doa_target if lam >= 0.5 else doa_target[index]
         else:
             doa_mixed = None
             
@@ -229,10 +231,10 @@ def run_stage(
     deit_init: bool,
     deit_model: str,
     model_type: str,
-    deit_pretrained: bool,
     M2MAST,
     ZarrReader,
 ) -> None:
+    atexit.register(_cleanup_cuda, device.type)
     stage_name = "SED" if model_type == "SED" else "DOA"
     model_type = ModelType.SED if model_type == "SED" else ModelType.DOA
     print(f"Starting {stage_name} training for {zarr_amount} zarr files.")
@@ -246,17 +248,21 @@ def run_stage(
         state = torch.load(save_path, map_location=device)
         model.load_state_dict(state)
         warmup = False
-        print(f"Loaded existing model: {save_path}")
+        print(f"Intialized existing model: {save_path}")
+    elif deit_init:
+        model.load_deit_weights(model_name=deit_model)
+        print(f"Initialized with pre-trained weights from {deit_model}")
     else:
         model.init_weights()
-        if deit_init:
-            model.load_deit_weights(model_name=deit_model, pretrained=deit_pretrained)
+        print("Initialized new model weights.")
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=config.learning_rate,
         weight_decay=config.weight_decay,
     )
+
+    augmenter = Augmenter(config).to(device)
 
     best_val_loss = float("inf")
     total_epoch_seconds = 0.0
@@ -289,6 +295,7 @@ def run_stage(
                 reader,
                 optimizer,
                 model_type,
+                augmenter
             )
             epoch_train_loss += t_loss
             epoch_val_loss += v_loss
@@ -318,11 +325,6 @@ def run_stage(
             torch.save(model.state_dict(), save_path)
             print(f"--> New best {stage_name} model saved: {save_path}")
 
-    if device.type == "cuda":
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train ACCDOA M2M-AST model in PyTorch")
     parser.add_argument("--model-type", type=str, default="SED", choices=["SED", "DOA"])
@@ -332,8 +334,7 @@ def main() -> None:
     parser.add_argument("--save-doa", type=Path, default=Path("m2m_ast_doa.pt"))
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--deit-init", action="store_true")
-    parser.add_argument("--deit-model", type=str, default="deit_base_patch16_224")
-    parser.add_argument("--deit-no-pretrained", action="store_true")
+    parser.add_argument("--deit-model", type=str, default="deit_base_distilled_patch16_224")
 
     args = parser.parse_args()
 
@@ -360,11 +361,9 @@ def main() -> None:
         args.deit_init,
         args.deit_model,
         args.model_type,
-        not args.deit_no_pretrained,
         M2MAST,
         ZarrReader,
     )
-
 
 if __name__ == "__main__":
     main()

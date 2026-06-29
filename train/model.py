@@ -127,11 +127,7 @@ class M2MAST(nn.Module):
                     nn.init.constant_(module.in_proj_bias, 0.0)
 
     @torch.no_grad()
-    def load_deit_weights(
-        self,
-        model_name: str = "deit_base_patch16_224",
-        pretrained: bool = True,
-    ) -> None:
+    def load_deit_weights(self, model_name: str = "deit_base_distilled_patch16_224") -> None:
         try:
             import timm
         except ModuleNotFoundError as exc:
@@ -139,7 +135,7 @@ class M2MAST(nn.Module):
                 "Install timm to load DeiT weights: pip install timm"
             ) from exc
 
-        deit = timm.create_model(model_name, pretrained=pretrained)
+        deit = timm.create_model(model_name, pretrained=True)
         deit.eval()
 
         patch_weight = deit.patch_embed.proj.weight
@@ -147,7 +143,7 @@ class M2MAST(nn.Module):
         self.patch_embed.proj.weight.copy_(patch_weight.to(self.patch_embed.proj.weight))
         if deit.patch_embed.proj.bias is not None:
             self.patch_embed.proj.bias.copy_(deit.patch_embed.proj.bias.to(self.patch_embed.proj.bias))
-
+    
         for layer_idx, layer in enumerate(self.encoder.layers):
             block = deit.blocks[layer_idx]
             layer.self_attn.in_proj_weight.copy_(block.attn.qkv.weight.to(layer.self_attn.in_proj_weight))
@@ -171,8 +167,15 @@ class M2MAST(nn.Module):
             self.encoder.norm.weight.copy_(deit.norm.weight.to(self.encoder.norm.weight))
             self.encoder.norm.bias.copy_(deit.norm.bias.to(self.encoder.norm.bias))
 
-        cls_token = deit.cls_token.to(self.cls_tokens)
-        self.cls_tokens.copy_(cls_token.expand(1, self.config.t_prime, -1))
+        if hasattr(deit, 'dist_token') and deit.dist_token is not None:
+            # Average the cls_token and dist_token
+            avg_token = (deit.cls_token + deit.dist_token) / 2.0
+            avg_token = avg_token.to(self.cls_tokens)
+            self.cls_tokens.copy_(avg_token.expand(1, self.config.t_prime, -1))
+        else:
+            # Fallback for standard DeiT without distillation
+            cls_token = deit.cls_token.to(self.cls_tokens)
+            self.cls_tokens.copy_(cls_token.expand(1, self.config.t_prime, -1))
 
         cls_pos, patch_pos = self._resize_pos_embed(deit.pos_embed)
         pos_embed = torch.zeros_like(self.pos_embed)
@@ -194,8 +197,20 @@ class M2MAST(nn.Module):
 
     def _resize_pos_embed(self, posemb: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         pos_embed = posemb.to(self.pos_embed)
-        cls_pos = pos_embed[:, 0:1]
-        pos_tokens = pos_embed[:, 1:]
+        
+        # Calculate how many prefix tokens exist by subtracting the known 14x14 grid
+        # (DeiT base is always 14x14 patches = 196)
+        patch_count = 14 * 14
+        num_prefix = pos_embed.size(1) - patch_count
+        
+        # Isolate the prefix token(s) and the patch tokens
+        cls_pos = pos_embed[:, :num_prefix]
+        pos_tokens = pos_embed[:, num_prefix:]
+        
+        # If distilled (2 tokens), average them as dictated by the M2M-AST paper
+        if num_prefix > 1:
+            cls_pos = cls_pos.mean(dim=1, keepdim=True)
+            
         grid_old = int(math.sqrt(pos_tokens.size(1)))
         if grid_old * grid_old != pos_tokens.size(1):
             raise ValueError("Unexpected DeiT pos_embed shape.")
@@ -204,7 +219,7 @@ class M2MAST(nn.Module):
         pos_tokens = F.interpolate(
             pos_tokens,
             size=self.config.patch_grid(),
-            mode="bicubic",
+            mode="bilinear",
             align_corners=False,
         )
         pos_tokens = pos_tokens.permute(0, 2, 3, 1).reshape(1, -1, pos_tokens.size(1))
