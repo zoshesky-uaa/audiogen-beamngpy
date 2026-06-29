@@ -75,7 +75,7 @@ inference_amount = int(target_res * (sample_rate / hop_length)) # Number of fram
 # x_in: [config.batch_size, 1, config.frame_time_seq, config.mel_bins] (e.g., [24, 1, 300, 128])
 
 # DOA Features (doa_featureset)
-# Concept: 5-channel features (1 log-mel + 4 intensity vectors).
+# Concept: 5-channel features (3 log-mel + 2 intensity).
 # read_buffer: [5, config.frame_time_seq, config.mel_bins] (e.g., [5, 300, 128])
 # x_in: [config.batch_size, 5, config.frame_time_seq, config.mel_bins] (e.g., [24, 5, 300, 128])
 

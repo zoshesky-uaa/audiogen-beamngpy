@@ -99,19 +99,16 @@ class M2MAST(nn.Module):
 
     @torch.no_grad()
     def init_weights(self) -> None:
-        nn.init.normal_(self.cls_tokens, mean=0.0, std=0.02)
-        self.cls_tokens.clamp_(-0.04, 0.04)
-        nn.init.normal_(self.pos_embed, mean=0.0, std=0.02)
-        self.pos_embed.clamp_(-0.04, 0.04)
+        # Use PyTorch's native trunc_normal_ with the bounds explicitly defined
+        nn.init.trunc_normal_(self.cls_tokens, mean=0.0, std=0.02, a=-0.04, b=0.04)
+        nn.init.trunc_normal_(self.pos_embed, mean=0.0, std=0.02, a=-0.04, b=0.04)
 
-        nn.init.normal_(self.head.weight, mean=0.0, std=0.02)
-        self.head.weight.clamp_(-0.04, 0.04)
+        nn.init.trunc_normal_(self.head.weight, mean=0.0, std=0.02, a=-0.04, b=0.04)
         nn.init.constant_(self.head.bias, 0.0)
 
         for module in self.encoder.modules():
             if isinstance(module, nn.Linear):
-                nn.init.normal_(module.weight, mean=0.0, std=0.02)
-                module.weight.clamp_(-0.04, 0.04)
+                nn.init.trunc_normal_(module.weight, mean=0.0, std=0.02, a=-0.04, b=0.04)
                 if module.bias is not None:
                     nn.init.constant_(module.bias, 0.0)
             elif isinstance(module, nn.LayerNorm):
@@ -121,8 +118,7 @@ class M2MAST(nn.Module):
                     nn.init.constant_(module.bias, 0.0)
             elif isinstance(module, nn.MultiheadAttention):
                 if module.in_proj_weight is not None:
-                    nn.init.normal_(module.in_proj_weight, mean=0.0, std=0.02)
-                    module.in_proj_weight.clamp_(-0.04, 0.04)
+                    nn.init.trunc_normal_(module.in_proj_weight, mean=0.0, std=0.02, a=-0.04, b=0.04)
                 if module.in_proj_bias is not None:
                     nn.init.constant_(module.in_proj_bias, 0.0)
 

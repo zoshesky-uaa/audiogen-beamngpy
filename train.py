@@ -97,22 +97,22 @@ def compute_f1(
     # Calculate angular error in degrees
     angular_dist = torch.acos(dot_product) * (180.0 / math.pi)
     
-    # Spatial tolerance gate: 1.0 if within 40 degrees, else 0.0  (F40 threshold)
-    spatial_mask = (angular_dist <= 40.0).to(torch.float32)
+    # Spatial tolerance gate: 1.0 if within 20 degrees, else 0.0  (F20 threshold)
+    spatial_mask = (angular_dist <= 20.0).to(torch.float32)
     
-    # Location-Dependent True Positives: Event detected AND active in ground truth AND spatial error <= 40°
-    f40_tp = (sed_binary * sed_target * spatial_mask).sum().item()
+    # Location-Dependent True Positives: Event detected AND active in ground truth AND spatial error <= 20°
+    f20_tp = (sed_binary * sed_target * spatial_mask).sum().item()
     
-    # Location-Dependent False Positives: Predicted event, but it didn't exist OR was outside the 40° boundary
-    f40_fp = (sed_binary * (1.0 - (sed_target * spatial_mask))).sum().item()
+    # Location-Dependent False Positives: Predicted event, but it didn't exist OR was outside the 20° boundary
+    f20_fp = (sed_binary * (1.0 - (sed_target * spatial_mask))).sum().item()
     
-    # Location-Dependent False Negatives: True event existed, but was missed OR predicted outside the 40° boundary
-    f40_fn = (sed_target * (1.0 - (sed_binary * spatial_mask))).sum().item()
+    # Location-Dependent False Negatives: True event existed, but was missed OR predicted outside the 20° boundary
+    f20_fn = (sed_target * (1.0 - (sed_binary * spatial_mask))).sum().item()
     
-    f40_precision = f40_tp / (f40_tp + f40_fp + 1e-8)
-    f40_recall = f40_tp / (f40_tp + f40_fn + 1e-8)
+    f20_precision = f20_tp / (f20_tp + f20_fp + 1e-8)
+    f20_recall = f20_tp / (f20_tp + f20_fn + 1e-8)
     
-    return 2.0 * (f40_precision * f40_recall) / (f40_precision + f40_recall + 1e-8)
+    return 2.0 * (f20_precision * f20_recall) / (f20_precision + f20_recall + 1e-8)
 
 
 def train_on_zarr(
