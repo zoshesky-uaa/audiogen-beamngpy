@@ -33,6 +33,32 @@ def _cleanup_cuda(device_type: str) -> None:
         except Exception:
             pass
 
+
+def save_torchscript(model, config, model_type, save_path: Path) -> None:
+    """Serialize the model as a TorchScript module that the C++ inference binary
+    (``torch::jit::load`` in ACCDOA-libtorch) can load directly.
+
+    A fresh CPU copy of the network is built and the current weights are copied
+    into it, so the live (possibly CUDA / channels_last) model is never moved or
+    mutated, and the artifact is device-portable (inference moves it to CUDA on
+    its own). Tracing is sufficient because ``M2MAST.forward`` has no
+    data-dependent control flow; its only branch depends on ``model_type``, which
+    is fixed for the exported instance.
+    """
+    export_model = M2MAST(config, model_type)
+    export_model.load_state_dict(model.state_dict())
+    export_model.eval()
+
+    in_chans = int(model_type)  # SED -> 1, DOA -> 5 (enum value doubles as channel count)
+    example = torch.zeros(
+        1, in_chans, int(config.frame_time_seq), int(config.mel_bins),
+        dtype=torch.float32,
+    )
+    with torch.no_grad():
+        scripted = torch.jit.trace(export_model, example, strict=False)
+    torch.jit.save(scripted, str(save_path))
+
+
 def adjust_learning_rate(
     optimizer: torch.optim.Optimizer,
     epoch: int,
@@ -245,10 +271,11 @@ def run_stage(
 
     warmup = True
     if save_path.exists():
-        state = torch.load(save_path, map_location=device)
-        model.load_state_dict(state)
+        # Checkpoints are TorchScript modules; read the weights back out for resuming.
+        scripted = torch.jit.load(str(save_path), map_location=device)
+        model.load_state_dict(scripted.state_dict())
         warmup = False
-        print(f"Intialized existing model: {save_path}")
+        print(f"Resumed existing model (TorchScript): {save_path}")
     elif deit_init:
         model.load_deit_weights(model_name=deit_model)
         print(f"Initialized with pre-trained weights from {deit_model}")
@@ -322,16 +349,16 @@ def run_stage(
 
         if epoch_val_loss < best_val_loss and epoch_val_loss < config.validation_lowest:
             best_val_loss = epoch_val_loss
-            torch.save(model.state_dict(), save_path)
-            print(f"--> New best {stage_name} model saved: {save_path}")
+            save_torchscript(model, config, model_type, save_path)
+            print(f"--> New best {stage_name} model saved (TorchScript): {save_path}")
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train ACCDOA M2M-AST model in PyTorch")
     parser.add_argument("--model-type", type=str, default="SED", choices=["SED", "DOA"])
     parser.add_argument("--zarr-dir", type=Path, default=const.trial_path)
     parser.add_argument("--zarr-amount", type=int)
-    parser.add_argument("--save-sed", type=Path, default=Path("m2m_ast_sed.pt"))
-    parser.add_argument("--save-doa", type=Path, default=Path("m2m_ast_doa.pt"))
+    parser.add_argument("--save-sed", type=Path, default=Path("m2m_ast_sed.script.pt"))
+    parser.add_argument("--save-doa", type=Path, default=Path("m2m_ast_doa.script.pt"))
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--deit-init", action="store_true")
     parser.add_argument("--deit-model", type=str, default="deit_base_distilled_patch16_224")

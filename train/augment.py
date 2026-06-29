@@ -37,54 +37,45 @@ class Augmenter(nn.Module):
         # 3. SPATIAL MIXUP & ROTATION (DOA ONLY)
         # ==========================================
         if doa_target is not None:
-            B, Chunks, Tracks, Coords = doa_target.shape
-            neg_x = (torch.rand((batch_size, 1, 1, 1), device=device) < self.rot_prob)
-            neg_y = (torch.rand((batch_size, 1, 1, 1), device=device) < self.rot_prob)
-            swap  = (torch.rand((batch_size, 1, 1, 1), device=device) < self.rot_prob)
+                neg_x = (torch.rand((batch_size, 1, 1, 1), device=device) < self.rot_prob)
+                neg_y = (torch.rand((batch_size, 1, 1, 1), device=device) < self.rot_prob)
+                swap  = (torch.rand((batch_size, 1, 1, 1), device=device) < self.rot_prob)
 
-            # A. Directional Loudness (Scaling X, Y Power Only: Channels 1, 2)
-            # Scaling intensity (3, 4) is not physically required for soft caps
-            x[:, 1:2] *= torch.empty((batch_size, 1, 1, 1), device=device).uniform_(0.7, 1.0)
-            x[:, 2:3] *= torch.empty((batch_size, 1, 1, 1), device=device).uniform_(0.7, 1.0)
+                # Feature channels: [0:W logmel, 1:X logmel, 2:Y logmel, 3:IV_x, 4:IV_y]
 
-            # B. Rotation (Negate & Swap ONLY Intensity Channels 3 and 4)
-            # Power Channels (1, 2) Swap only, never negate!
-            x[:, 1:3] = torch.where(swap, x[:, 2:4], x[:, 1:3]) 
-            
-            # Corrected Swap Logic for Power (Ch 1, 2) and Intensity (Ch 3, 4)
-            p_x, p_y = x[:, 1:2].clone(), x[:, 2:3].clone()
-            x[:, 1:2] = torch.where(swap, p_y, x[:, 1:2])
-            x[:, 2:3] = torch.where(swap, p_x, x[:, 2:3])
+                # A. Directional loudness on the X/Y power channels. These hold 0.5*log10(power),
+                #    so a loudness scale by g is an ADDITIVE offset of 0.5*log10(g). A multiply
+                #    here lifts the -7 silence floor instead of attenuating. Note this perturbs
+                #    only the power channels; a physically exact directional loudness would also
+                #    rescale W and re-derive the intensity vectors, so treat this as a light cap.
+                g_x = torch.empty((batch_size, 1, 1, 1), device=device).uniform_(0.7, 1.0)
+                g_y = torch.empty((batch_size, 1, 1, 1), device=device).uniform_(0.7, 1.0)
+                x[:, 1:2] += 0.5 * torch.log10(g_x)
+                x[:, 2:3] += 0.5 * torch.log10(g_y)
 
-            i_x, i_y = x[:, 3:4].clone(), x[:, 4:5].clone()
-            x[:, 3:4] = torch.where(neg_x, -x[:, 3:4], x[:, 3:4]) # Negate X-IV
-            x[:, 4:5] = torch.where(neg_y, -x[:, 4:5], x[:, 4:5]) # Negate Y-IV
-            
-            x[:, 3:4] = torch.where(swap, i_y, x[:, 3:4])
-            x[:, 4:5] = torch.where(swap, i_x, x[:, 4:5])
+                # B. Negate the intensity channels FIRST (power channels are magnitudes, never negated).
+                x[:, 3:4] = torch.where(neg_x, -x[:, 3:4], x[:, 3:4])
+                x[:, 4:5] = torch.where(neg_y, -x[:, 4:5], x[:, 4:5])
 
-            # 3. Rotate Ground Truth Targets [Batch, 1, Tracks*2]
-            m_neg_x = neg_x.view(B, 1, 1, 1)
-            m_neg_y = neg_y.view(B, 1, 1, 1)
-            m_swap  = swap.view(B, 1, 1, 1)
+                # C. THEN swap X<->Y on the power channels and the (now negated) intensity channels.
+                #    Clone after negation so the sign survives the swap.
+                p_x, p_y = x[:, 1:2].clone(), x[:, 2:3].clone()
+                x[:, 1:2] = torch.where(swap, p_y, x[:, 1:2])
+                x[:, 2:3] = torch.where(swap, p_x, x[:, 2:3])
 
-            # 3. Expand to match [B, Chunks, Tracks, Coords]
-            m_neg_x = m_neg_x.expand(B, Chunks, Tracks, Coords)
-            m_neg_y = m_neg_y.expand(B, Chunks, Tracks, Coords)
-            m_swap  = m_swap.expand(B, Chunks, Tracks, Coords)
+                i_x, i_y = x[:, 3:4].clone(), x[:, 4:5].clone()
+                x[:, 3:4] = torch.where(swap, i_y, x[:, 3:4])
+                x[:, 4:5] = torch.where(swap, i_x, x[:, 4:5])
 
-            # Apply Negation (using the [Batch, 1, 1, 1] masks directly)
-            doa_target[:, :, :, 0::2] = torch.where(neg_x, -doa_target[:, :, :, 0::2], doa_target[:, :, :, 0::2])
-            doa_target[:, :, :, 1::2] = torch.where(neg_y, -doa_target[:, :, :, 1::2], doa_target[:, :, :, 1::2])
-
-            # Apply Swap
-            # Extract the halves (size [24, Chunks, Tracks, 9])
-            tx = doa_target[:, :, :, 0::2].clone()
-            ty = doa_target[:, :, :, 1::2].clone()
-            
-            # Here, 'swap' is [24, 1, 1, 1], which broadcasts perfectly to [24, Chunks, Tracks, 9]
-            doa_target[:, :, :, 0::2] = torch.where(swap, ty, tx)
-            doa_target[:, :, :, 1::2] = torch.where(swap, tx, ty)
+                # Targets: last dim is interleaved (x, y) per class/track -> 0::2 = x, 1::2 = y.
+                # Negate first ...
+                doa_target[:, :, :, 0::2] = torch.where(neg_x, -doa_target[:, :, :, 0::2], doa_target[:, :, :, 0::2])
+                doa_target[:, :, :, 1::2] = torch.where(neg_y, -doa_target[:, :, :, 1::2], doa_target[:, :, :, 1::2])
+                # ... then swap, on the post-negation values.
+                tx = doa_target[:, :, :, 0::2].clone()
+                ty = doa_target[:, :, :, 1::2].clone()
+                doa_target[:, :, :, 0::2] = torch.where(swap, ty, tx)
+                doa_target[:, :, :, 1::2] = torch.where(swap, tx, ty)
 
         # ==========================================
         # 4. SPECAUGMENT (Per-Channel)
